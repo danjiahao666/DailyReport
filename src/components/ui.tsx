@@ -1,6 +1,8 @@
 "use client";
 
 import { ApiError } from "@/lib/api-client";
+import { jobError } from "@/lib/job-client";
+import type { JobView } from "@/lib/types";
 
 type Tone = "error" | "warn" | "info";
 
@@ -98,6 +100,33 @@ export function Modal({ title, children, onClose }: { title: string; children: R
         </div>
         {children}
       </div>
+    </div>
+  );
+}
+
+/** 失败的异步任务：显示原因、重试与“忽略”（清除失败标记） */
+export function JobFailed({
+  job,
+  note,
+  onRetry,
+  onDismiss,
+  busy,
+}: {
+  job: JobView;
+  note?: string;
+  onRetry: () => void;
+  onDismiss: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <div className="space-y-1">
+      <ErrorNotice error={jobError(job)} onRetry={onRetry} busy={busy} />
+      <p className="flex items-center gap-2 text-xs text-slate-500">
+        {note}
+        <button type="button" onClick={onDismiss} className="underline hover:text-slate-800">
+          忽略
+        </button>
+      </p>
     </div>
   );
 }

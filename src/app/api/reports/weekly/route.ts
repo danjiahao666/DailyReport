@@ -1,11 +1,10 @@
 import { isValidDate, weekRange } from "@/lib/dates";
 import { AppError } from "@/server/errors";
-import { readJson, route } from "@/server/http";
-import { generateWeekly, getReport } from "@/server/reports";
+import { json, readJson, route } from "@/server/http";
+import { getReport, startWeekly } from "@/server/reports";
 import { getWeekStart } from "@/server/settings";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
 
 /** 查询某日期所在自然周的周报（不存在时 report 为 null） */
 export const GET = route((req) => {
@@ -15,7 +14,8 @@ export const GET = route((req) => {
   return { range, report: getReport("weekly", range.start) };
 });
 
+/** 启动周报生成（异步）；没有日报、需要确认覆盖等情况会直接返回错误，不创建任务 */
 export const POST = route(async (req) => {
   const body = await readJson(req);
-  return generateWeekly(body.date, body.confirm);
+  return json({ job: startWeekly(body.date, body.confirm) }, 202);
 });

@@ -52,6 +52,34 @@ async function req(method, url, body, { auth = true, headers = {} } = {}) {
   return { status: res.status, json, text, res };
 }
 
+/** 轮询异步任务直到结束 */
+async function waitJob(kind, target) {
+  for (let i = 0; i < 200; i++) {
+    const r = await req("GET", `/api/jobs?kind=${kind}&target=${target}`);
+    if (r.json?.job && r.json.job.status !== "running") return r.json.job;
+    await new Promise((x) => setTimeout(x, 100));
+  }
+  throw new Error(`任务超时：${kind}:${target}`);
+}
+
+/**
+ * 启动异步任务并等待结束，返回与旧同步接口一致的 {status, json}：
+ * 启动阶段的校验错误原样返回；任务失败时 json.error 带错误码与中文提示。
+ */
+async function run(method, url, body) {
+  const r = await req(method, url, body);
+  if (r.status !== 202) return r;
+  const { kind, target } = r.json.job;
+  const job = await waitJob(kind, target);
+  if (job.status === "failed") return { status: 502, json: { error: { code: job.errorCode, message: job.errorMessage, retryable: job.retryable } } };
+  if (kind === "optimize") {
+    const e = (await req("GET", `/api/daily/${target}`)).json.entry;
+    return { status: 200, json: { entry: e, warnings: e.warnings } };
+  }
+  const q = kind === "weekly" ? `/api/reports/weekly?date=${target}` : `/api/reports/monthly?month=${target}`;
+  return { status: 200, json: (await req("GET", q)).json.report };
+}
+
 const llmStats = async () => (await (await fetch(`${LLM}/__stats`)).json()).calls;
 const llmMode = (m) => fetch(`${LLM}/__mode?m=${m}`, { method: "POST" });
 
@@ -133,34 +161,47 @@ async function main() {
   ok("选择追加后合并到原文", app.json.original.endsWith("补充：同步评审结论") && app.json.original.includes("归档"));
 
   console.log("2. 日报优化");
-  const opt = await req("POST", `/api/daily/${D1}/optimize`);
+  const opt = await run("POST", `/api/daily/${D1}/optimize`);
   ok("优化成功，原文保留，优化稿作为候选", opt.status === 200 && opt.json.entry.optimized?.startsWith("- ") && opt.json.entry.active === "original", opt.json);
   ok("采用优化稿", (await req("PUT", `/api/daily/${D1}/active`, { active: "optimized" })).json.active === "optimized");
   ok("随时回退到原文", (await req("PUT", `/api/daily/${D1}/active`, { active: "original" })).json.effective.includes("归档资料"));
   await llmMode("500");
-  const bad = await req("POST", `/api/daily/${D2}/optimize`);
+  const bad = await run("POST", `/api/daily/${D2}/optimize`);
   ok("模型故障时返回明确错误且可重试", bad.status === 502 && bad.json.error.code === "LLM_UPSTREAM" && bad.json.error.retryable === true, bad.json);
   ok("失败不影响已保存的原文", (await req("GET", `/api/daily/${D2}`)).json.entry.original.includes("元旦值班"));
   await llmMode("empty");
-  ok("空内容有明确提示", (await req("POST", `/api/daily/${D2}/optimize`)).json.error.code === "LLM_EMPTY");
+  ok("空内容有明确提示", (await run("POST", `/api/daily/${D2}/optimize`)).json.error.code === "LLM_EMPTY");
   await llmMode("hang");
-  const slow = await req("POST", `/api/daily/${D2}/optimize`);
-  ok("超时有明确提示", slow.status === 504 && slow.json.error.code === "LLM_TIMEOUT", slow.json);
+  const slow = await run("POST", `/api/daily/${D2}/optimize`);
+  ok("超时有明确提示", slow.json.error?.code === "LLM_TIMEOUT", slow.json);
   await llmMode("ok");
-  ok("故障恢复后重试成功", (await req("POST", `/api/daily/${D2}/optimize`)).status === 200);
+  ok("故障恢复后重试成功", (await run("POST", `/api/daily/${D2}/optimize`)).status === 200);
+
+  console.log("2b. 异步任务：进行中状态可见、切换后仍可恢复");
+  await llmMode("slow");
+  const startedAt = Date.now();
+  const started = await req("POST", `/api/daily/${D3}/optimize`);
+  ok("启动优化立即返回 202 与进行中状态", started.status === 202 && started.json.job.status === "running" && Date.now() - startedAt < 1500, started.json);
+  const calRunning = await req("GET", "/api/calendar?month=2027-01");
+  ok("日历上该日期显示进行中", calRunning.json.jobs.some((j) => j.kind === "optimize" && j.target === D3 && j.status === "running"), calRunning.json.jobs);
+  const again = await req("POST", `/api/daily/${D3}/optimize`);
+  ok("重复启动幂等，不会重复调用模型", again.status === 202 && again.json.job.startedAt === started.json.job.startedAt);
+  const finished = await waitJob("optimize", D3);
+  ok("结束后状态为成功，优化稿已保存", finished.status === "succeeded" && (await req("GET", `/api/daily/${D3}`)).json.entry.optimized !== null);
+  await llmMode("ok");
 
   console.log("3. 周报");
   const before = await llmStats();
-  const empty = await req("POST", "/api/reports/weekly", { date: "2027-02-10" });
+  const empty = await run("POST", "/api/reports/weekly", { date: "2027-02-10" });
   ok("无日报的周给出明确提示", empty.status === 422 && empty.json.error.code === "NO_DAILY", empty.json);
   ok("且没有调用大模型", (await llmStats()) === before);
-  const wk = await req("POST", "/api/reports/weekly", { date: D3 });
+  const wk = await run("POST", "/api/reports/weekly", { date: D3 });
   const wid = wk.json?.id;
   ok("生成周报（周一起始 2027-01-04 ~ 2027-01-10）", wk.status === 200 && wk.json.periodStart === "2027-01-04" && wk.json.periodEnd === "2027-01-10" && wk.json.current.content.includes("## 下周计划建议"), wk.json);
   ok("手动编辑生成新版本", (await req("PUT", `/api/reports/${wid}`, { content: "## 我的周报\n- 手写内容" })).json.current.versionNo === 2);
-  const refuse = await req("POST", "/api/reports/weekly", { date: D3 });
+  const refuse = await run("POST", "/api/reports/weekly", { date: D3 });
   ok("重新生成前需确认，避免覆盖已编辑内容", refuse.status === 409 && refuse.json.error.code === "CONFIRM_OVERWRITE_EDITED");
-  const regen = await req("POST", "/api/reports/weekly", { date: D3, confirm: true });
+  const regen = await run("POST", "/api/reports/weekly", { date: D3, confirm: true });
   ok("确认后生成新版本，已编辑版本仍保留", regen.json.current.versionNo === 3 && regen.json.versions.some((v) => v.versionNo === 2 && v.content.includes("手写内容")));
   const v2 = regen.json.versions.find((v) => v.versionNo === 2);
   const rest = await req("POST", `/api/reports/${wid}/restore`, { versionId: v2.id });
@@ -171,12 +212,12 @@ async function main() {
   const w0 = planW.json.weeks[0];
   ok("跨月周按日期归属拆分，仅取属于本月的日期", w0.weekStart === "2026-12-28" && w0.full === false && w0.use === "daily" && w0.from === "2027-01-01", w0);
   ok("整周在本月且有周报的周使用周报", planW.json.weeks.some((w) => w.weekStart === "2027-01-04" && w.use === "weekly"));
-  const mDaily = await req("POST", "/api/reports/monthly", { month: "2027-01", source: "daily" });
+  const mDaily = await run("POST", "/api/reports/monthly", { month: "2027-01", source: "daily" });
   ok("基于日报生成月报", mDaily.status === 200 && mDaily.json.current.content.includes("## 月度工作概览"), mDaily.json);
   ok("月报不包含上月日期的日报", !mDaily.json.current.content.includes("归档") && mDaily.json.current.meta.dailyDates.join() === `${D2},${D3}`, mDaily.json.current.meta);
-  const mWeekly = await req("POST", "/api/reports/monthly", { month: "2027-01", source: "weekly" });
+  const mWeekly = await run("POST", "/api/reports/monthly", { month: "2027-01", source: "weekly" });
   ok("基于周报生成月报（保留为新版本）", mWeekly.status === 200 && mWeekly.json.current.versionNo === 2 && mWeekly.json.current.meta.source === "weekly", mWeekly.json);
-  const mEmpty = await req("POST", "/api/reports/monthly", { month: "2027-05", source: "daily" });
+  const mEmpty = await run("POST", "/api/reports/monthly", { month: "2027-05", source: "daily" });
   ok("无数据的月份给出明确提示", mEmpty.status === 422 && mEmpty.json.error.code === "NO_DATA");
 
   console.log("5. 日历");
@@ -208,11 +249,11 @@ async function main() {
   await llmMode("ok");
   const def = await req("PUT", "/api/settings/llm/default", { provider: "fake2", model: "fake-model" });
   ok("设置默认模型", def.json.defaultProvider === "fake2", def.json);
-  const opt2 = await req("POST", `/api/daily/${D2}/optimize`);
+  const opt2 = await run("POST", `/api/daily/${D2}/optimize`);
   ok("修改后无需重启，优化立即使用新的默认模型", opt2.status === 200 && opt2.json.entry.optimizedModel === "fake2/fake-model", opt2.json);
   const del = await req("DELETE", "/api/settings/llm/provider/fake2");
   ok("删除 provider 并清除指向它的默认模型", del.status === 200 && del.json.defaultProvider === null && !del.json.customProviders.some((p) => p.id === "fake2"), del.json);
-  ok("删除后仍可用原有模型优化", (await req("POST", `/api/daily/${D2}/optimize`)).status === 200);
+  ok("删除后仍可用原有模型优化", (await run("POST", `/api/daily/${D2}/optimize`)).status === 200);
 }
 
 try {

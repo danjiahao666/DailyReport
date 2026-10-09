@@ -1,9 +1,8 @@
-import { createHash } from "node:crypto";
-import type { CalendarDaily, DailyEntry, DailyVersion } from "@/lib/types";
+import type { CalendarDaily, DailyEntry, DailyVersion, JobView } from "@/lib/types";
 import { isValidDate } from "@/lib/dates";
 import { getDb, nowIso, transaction } from "./db";
 import { AppError } from "./errors";
-import { withLock } from "./inflight";
+import { clearJob, startJob } from "./jobs";
 import { generateText } from "./llm/client";
 import { optimizationWarnings } from "./llm/guard";
 import { OPTIMIZE_SYSTEM, optimizeUser } from "./llm/prompts";
@@ -35,6 +34,7 @@ function toEntry(row: DailyRow): DailyEntry {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     effective: useOptimized ? (row.optimized as string) : row.original,
+    warnings: row.optimized !== null && row.optimized_stale !== 1 ? optimizationWarnings(row.original, row.optimized) : [],
   };
 }
 
@@ -141,6 +141,7 @@ export function editDaily(date: string, target: unknown, contentInput: unknown):
 export function deleteDaily(date: string): void {
   const result = getDb().prepare("DELETE FROM daily_entries WHERE date = ?").run(date);
   if (Number(result.changes) === 0) throw new AppError(404, "NOT_FOUND", "该日期没有日报");
+  clearJob("optimize", date);
 }
 
 /** 选择采用哪一版；随时可回退到原文 */
@@ -156,39 +157,30 @@ export function setActiveVersion(date: string, active: unknown): DailyEntry {
   return requireDaily(date);
 }
 
-function sha(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
-}
-
-export interface OptimizeResult {
-  entry: DailyEntry;
-  warnings: string[];
-}
-
 /**
- * 调用大模型优化日报。优化稿作为"候选版本"保存，不会自动替换原文，也不改变当前采用的版本；
- * 失败时不修改任何已保存的数据，可直接重试。
+ * 启动日报优化任务：校验后立即返回，模型调用在后台执行（状态见 /api/jobs 与日历）。
+ * 优化稿作为“候选版本”保存，不会自动替换原文，也不改变当前采用的版本；
+ * 失败时不修改任何已保存的数据，任务状态记为失败，可直接重试。
  */
-export async function optimizeDaily(date: string): Promise<OptimizeResult> {
+export function startOptimizeDaily(date: string): JobView {
   const before = requireDaily(date);
-  return withLock(`daily:${date}`, async () => {
+  return startJob("optimize", date, async () => {
     const { text, model } = await generateText({
       task: "optimize",
       system: OPTIMIZE_SYSTEM,
       user: optimizeUser(before.original),
       maxTokens: 4096,
     });
-    const entry = transaction((db) => {
+    transaction((db) => {
       const row = db.prepare("SELECT * FROM daily_entries WHERE date = ?").get(date) as DailyRow | undefined;
       if (!row) throw new AppError(404, "NOT_FOUND", "该日报在优化期间已被删除");
-      if (sha(row.original) !== sha(before.original)) {
+      if (row.original !== before.original) {
         throw new AppError(409, "CHANGED_DURING_OPTIMIZE", "日报在优化期间被修改，本次优化结果已丢弃，请重试");
       }
+      const now = nowIso();
       db.prepare(
         "UPDATE daily_entries SET optimized = ?, optimized_stale = 0, optimized_model = ?, optimized_at = ?, updated_at = ? WHERE date = ?",
-      ).run(text, model, nowIso(), nowIso(), date);
-      return requireDaily(date);
+      ).run(text, model, now, now, date);
     });
-    return { entry, warnings: optimizationWarnings(before.original, text) };
   });
 }

@@ -19,6 +19,8 @@ export interface DailyEntry {
   updatedAt: string;
   /** 当前采用版本的文本（周报、月报使用此文本） */
   effective: string;
+  /** 优化稿的事实核对提示（如出现了原文没有的数字），由原文与优化稿即时计算 */
+  warnings: string[];
 }
 
 export interface ReportMeta {
@@ -82,6 +84,8 @@ export interface CalendarData {
   dailies: CalendarDaily[];
   weeklies: ReportSummary[];
   monthly: ReportSummary | null;
+  /** 网格范围内的大模型任务状态（日报优化、周报，以及当月月报） */
+  jobs: JobView[];
 }
 
 export interface MonthlyPlan {
@@ -174,4 +178,26 @@ export interface LlmTestResult {
   provider: string;
   model: string;
   ms: number;
+}
+
+// ---------- 异步任务 ----------
+
+export type JobKind = "optimize" | "weekly" | "monthly";
+export type JobStatus = "running" | "succeeded" | "failed";
+
+/**
+ * 大模型异步任务的状态。target：
+ *  - optimize：日期 YYYY-MM-DD
+ *  - weekly：该周起始日 YYYY-MM-DD
+ *  - monthly：月份 YYYY-MM
+ */
+export interface JobView {
+  kind: JobKind;
+  target: string;
+  status: JobStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  retryable: boolean;
+  startedAt: string;
+  finishedAt: string | null;
 }

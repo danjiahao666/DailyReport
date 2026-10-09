@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type {
+  JobView,
   MonthlyPlan,
   MonthlySource,
   Report,
@@ -21,7 +22,7 @@ import {
 import { getDb, nowIso, transaction } from "./db";
 import { AppError } from "./errors";
 import { listDailies } from "./daily";
-import { withLock } from "./inflight";
+import { startJob } from "./jobs";
 import { generateText } from "./llm/client";
 import {
   MONTHLY_SYSTEM,
@@ -319,7 +320,11 @@ function assertInputSize(chars: number): void {
   }
 }
 
-export async function generateWeekly(dateInput: unknown, confirm?: unknown): Promise<Report> {
+/**
+ * 启动周报生成任务。同步部分（参数、无日报提示、覆盖确认、长度上限）校验失败时直接返回错误，
+ * 此时不会创建任务也不会调用大模型；通过后立即返回任务状态，模型调用在后台执行。
+ */
+export function startWeekly(dateInput: unknown, confirm?: unknown): JobView {
   if (!isValidDate(dateInput)) throw new AppError(400, "INVALID_DATE", "日期格式必须为 YYYY-MM-DD 且为有效日期");
   const range = weekRange(dateInput, getWeekStart());
   const input = collectWeekly(range);
@@ -331,7 +336,7 @@ export async function generateWeekly(dateInput: unknown, confirm?: unknown): Pro
   assertNotOverwritingEdits(getReport("weekly", range.start), confirm);
   assertInputSize(input.days.reduce((n, d) => n + d.text.length, 0));
 
-  return withLock(`weekly:${range.start}`, async () => {
+  return startJob("weekly", range.start, async () => {
     const { text, model } = await generateText({
       task: "weekly",
       system: WEEKLY_SYSTEM,
@@ -339,16 +344,15 @@ export async function generateWeekly(dateInput: unknown, confirm?: unknown): Pro
       maxTokens: 4096,
     });
     const meta: ReportMeta = { inputHash: input.hash, dailyDates: input.days.map((d) => d.date) };
-    const id = transaction((db) => {
+    transaction((db) => {
       const reportId = ensureReport(db, "weekly", range.start, range.end);
       appendVersion(db, reportId, { content: text, origin: "generated", model, meta });
-      return reportId;
     });
-    return getReportById(id);
   });
 }
 
-export async function generateMonthly(monthInput: unknown, sourceInput: unknown, confirm?: unknown): Promise<Report> {
+/** 启动月报生成任务，校验与返回方式同 startWeekly */
+export function startMonthly(monthInput: unknown, sourceInput: unknown, confirm?: unknown): JobView {
   if (!isValidMonth(monthInput)) throw new AppError(400, "INVALID_MONTH", "月份格式必须为 YYYY-MM");
   if (sourceInput !== "daily" && sourceInput !== "weekly") {
     throw new AppError(400, "INVALID_SOURCE", "source 只能是 daily 或 weekly");
@@ -364,7 +368,7 @@ export async function generateMonthly(monthInput: unknown, sourceInput: unknown,
   assertNotOverwritingEdits(getReport("monthly", mr.start), confirm);
   assertInputSize(input.blocks.reduce((n, b) => n + b.text.length, 0));
 
-  return withLock(`monthly:${month}`, async () => {
+  return startJob("monthly", month, async () => {
     const { text, model } = await generateText({
       task: "monthly",
       system: MONTHLY_SYSTEM,
@@ -377,12 +381,10 @@ export async function generateMonthly(monthInput: unknown, sourceInput: unknown,
       dailyDates: input.dailyDates,
       weeklyRefs: input.weeklyRefs,
     };
-    const id = transaction((db) => {
+    transaction((db) => {
       const reportId = ensureReport(db, "monthly", mr.start, mr.end);
       appendVersion(db, reportId, { content: text, origin: "generated", model, meta });
-      return reportId;
     });
-    return getReportById(id);
   });
 }
 

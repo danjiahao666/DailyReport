@@ -1,13 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, todayLocal } from "@/lib/api-client";
 import { monthOf, WEEKDAY_NAMES, weekRange } from "@/lib/dates";
-import type { CalendarData } from "@/lib/types";
+import { findJob, upsertJob } from "@/lib/job-client";
+import type { CalendarData, JobKind, JobView } from "@/lib/types";
 import { Calendar, type Selection } from "./Calendar";
 import { DailyPanel } from "./DailyPanel";
 import { ReportPanel } from "./ReportPanel";
 import { ErrorNotice } from "./ui";
+
+/** 有任务在后台执行时，每隔多久向服务端同步一次状态 */
+const POLL_MS = 1500;
 
 export function App({ authEnabled }: { authEnabled: boolean }) {
   const [today] = useState(todayLocal);
@@ -19,23 +23,65 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
   const [weekStart, setWeekStart] = useState(1);
   const [settingsError, setSettingsError] = useState<ApiError | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await api<CalendarData>("GET", `/api/calendar?month=${month}`);
-      setData(res);
-      setWeekStart(res.weekStart);
-    } catch (e) {
-      setError(e as ApiError);
-    } finally {
-      setLoading(false);
-    }
-  }, [month]);
+  const monthRef = useRef(month);
+  monthRef.current = month;
+  const reqId = useRef(0);
+  const polling = useRef(false);
+
+  /** silent=true 用于后台轮询：不显示加载中、不弹错误，也不会和正在进行的轮询重叠 */
+  const refresh = useCallback(
+    async (silent = false) => {
+      const m = month;
+      if (silent) {
+        if (polling.current) return;
+        polling.current = true;
+      }
+      const id = silent ? reqId.current : ++reqId.current;
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      try {
+        const res = await api<CalendarData>("GET", `/api/calendar?month=${m}`);
+        // 用户已切到别的月份，或有更新的请求，丢弃这次结果
+        if (m !== monthRef.current || (!silent && id !== reqId.current)) return;
+        setData(res);
+        setWeekStart(res.weekStart);
+      } catch (e) {
+        if (!silent && id === reqId.current) setError(e as ApiError);
+      } finally {
+        if (silent) polling.current = false;
+        else if (id === reqId.current) setLoading(false);
+      }
+    },
+    [month],
+  );
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // 有进行中的大模型任务时轮询；切到别的页面再回来会重新加载，同样能拿到服务端保存的状态
+  const hasRunning = data?.jobs.some((j) => j.status === "running") ?? false;
+  useEffect(() => {
+    if (!hasRunning) return;
+    const timer = setInterval(() => void refresh(true), POLL_MS);
+    return () => clearInterval(timer);
+  }, [hasRunning, refresh]);
+
+  // 页签从后台切回前台时立即同步一次
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh(true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refresh]);
+
+  /** 面板启动任务或忽略失败后，立即把最新状态写入本地，不必等下一次轮询 */
+  const setJob = useCallback((kind: JobKind, target: string, job: JobView | null) => {
+    setData((d) => (d ? { ...d, jobs: upsertJob(d.jobs, kind, target, job) } : d));
+  }, []);
 
   async function changeWeekStart(value: number) {
     setSettingsError(null);
@@ -54,6 +100,7 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
 
   // 周起始日变化后，保持选中的周报仍指向包含该日期的那一周
   const weekly = selection.type === "weekly" ? weekRange(selection.date, weekStart) : null;
+  const jobs = data?.jobs ?? [];
 
   return (
     <main className="mx-auto max-w-6xl space-y-4 p-4 md:p-6">
@@ -89,7 +136,7 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
       </header>
 
       {settingsError && <ErrorNotice error={settingsError} />}
-      {error && <ErrorNotice error={error} onRetry={refresh} busy={loading} />}
+      {error && <ErrorNotice error={error} onRetry={() => void refresh()} busy={loading} />}
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
         <Calendar
@@ -106,9 +153,32 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
           onMonthChange={setMonth}
         />
         <div>
-          {selection.type === "daily" && <DailyPanel date={selection.date} onChanged={refresh} />}
-          {selection.type === "weekly" && weekly && <ReportPanel kind="weekly" anchor={weekly.start} onChanged={refresh} />}
-          {selection.type === "monthly" && <ReportPanel kind="monthly" anchor={selection.month} onChanged={refresh} />}
+          {selection.type === "daily" && (
+            <DailyPanel
+              date={selection.date}
+              job={findJob(jobs, "optimize", selection.date)}
+              onJob={(job) => setJob("optimize", selection.date, job)}
+              onChanged={() => void refresh()}
+            />
+          )}
+          {selection.type === "weekly" && weekly && (
+            <ReportPanel
+              kind="weekly"
+              anchor={weekly.start}
+              job={findJob(jobs, "weekly", weekly.start)}
+              onJob={(job) => setJob("weekly", weekly.start, job)}
+              onChanged={() => void refresh()}
+            />
+          )}
+          {selection.type === "monthly" && (
+            <ReportPanel
+              kind="monthly"
+              anchor={selection.month}
+              job={findJob(jobs, "monthly", selection.month)}
+              onJob={(job) => setJob("monthly", selection.month, job)}
+              onChanged={() => void refresh()}
+            />
+          )}
         </div>
       </div>
     </main>

@@ -6,7 +6,7 @@ import { createModels, fauxProvider } from "@earendil-works/pi-ai";
 import { closeDb } from "@/server/db";
 import { resetLlmRuntime, setLlmBackendForTests } from "@/server/llm/client";
 
-type RouteFn = (req: NextRequest, ctx?: { params: Promise<never> }) => Promise<Response>;
+export type RouteFn = (req: NextRequest, ctx?: { params: Promise<never> }) => Promise<Response>;
 
 /** 每个测试文件使用独立的数据目录与 faux 模型 */
 export function setupTestEnv() {
@@ -47,4 +47,44 @@ export async function call(
   const res = await (handler as RouteFn)(req, params ? { params: Promise.resolve(params) as never } : undefined);
   const text = await res.text();
   return { status: res.status, body: text ? JSON.parse(text) : null, res };
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export interface TestJob {
+  kind: string;
+  target: string;
+  status: "running" | "succeeded" | "failed";
+  errorCode: string | null;
+  errorMessage: string | null;
+  retryable: boolean;
+}
+
+/** 轮询任务直到结束（成功或失败），最多约 8 秒 */
+export async function waitedJob(kind: string, target: string, headers: Record<string, string> = {}): Promise<TestJob> {
+  const { GET } = await import("@/app/api/jobs/route");
+  for (let i = 0; i < 400; i++) {
+    const r = await call(GET, "GET", `/api/jobs?kind=${kind}&target=${target}`, undefined, undefined, headers);
+    const job = r.body?.job as TestJob | null | undefined;
+    if (job && job.status !== "running") return job;
+    await sleep(20);
+  }
+  throw new Error(`任务未在预期时间内结束：${kind}:${target}`);
+}
+
+/**
+ * 把“启动异步任务”的路由包装成“等任务结束再返回结果”的形式：
+ * 启动阶段的校验错误原样返回；任务失败时返回与旧同步接口一致的错误体。
+ */
+export function waited(real: RouteFn, finish: (job: TestJob) => unknown): RouteFn {
+  return async (req, ctx) => {
+    const res = await real(req, ctx);
+    if (res.status !== 202) return res;
+    const { job } = (await res.json()) as { job: TestJob };
+    const done = await waitedJob(job.kind, job.target);
+    if (done.status === "failed") {
+      return Response.json({ error: { code: done.errorCode, message: done.errorMessage, retryable: done.retryable } }, { status: 502 });
+    }
+    return Response.json(finish(done));
+  };
 }

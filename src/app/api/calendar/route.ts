@@ -3,6 +3,7 @@ import type { CalendarData } from "@/lib/types";
 import { calendarDailies } from "@/server/daily";
 import { AppError } from "@/server/errors";
 import { route } from "@/server/http";
+import { listJobs } from "@/server/jobs";
 import { listReportSummaries } from "@/server/reports";
 import { getWeekStart } from "@/server/settings";
 
@@ -22,5 +23,10 @@ export const GET = route((req): CalendarData => {
     dailies: calendarDailies(grid.start, grid.end),
     weeklies: listReportSummaries("weekly", grid.start, grid.end),
     monthly: listReportSummaries("monthly", `${month}-01`, `${month}-01`)[0] ?? null,
+    jobs: [
+      ...listJobs("optimize", grid.start, grid.end),
+      ...listJobs("weekly", grid.start, grid.end),
+      ...listJobs("monthly", month, month),
+    ],
   };
 });

@@ -2,7 +2,29 @@
 
 import { addMonths, eachDay, monthGridRange, monthOf, WEEKDAY_NAMES } from "@/lib/dates";
 import type { CalendarData } from "@/lib/types";
+import { findJob } from "@/lib/job-client";
+import type { JobView } from "@/lib/types";
 import { Button } from "./ui";
+
+/** 任务状态角标：进行中显示转圈，失败显示红色提示；成功不额外标记（结果已体现在日报/周报/月报标记上） */
+function JobBadge({ job, running, failed, className = "" }: { job: JobView | null; running: string; failed: string; className?: string }) {
+  if (job?.status === "running") {
+    return (
+      <span className={`inline-flex items-center gap-1 ${className}`} title="大模型处理中，可切换页面，完成后回来查看">
+        <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent" />
+        {running}
+      </span>
+    );
+  }
+  if (job?.status === "failed") {
+    return (
+      <span className={`rounded bg-white/90 px-1 font-medium text-red-600 ${className}`} title={job.errorMessage ?? "任务失败"}>
+        ⚠ {failed}
+      </span>
+    );
+  }
+  return null;
+}
 
 export type Selection =
   | { type: "daily"; date: string }
@@ -29,6 +51,8 @@ export function Calendar({ month, weekStart, data, loading, today, selection, on
   const dailies = new Map(data?.dailies.map((d) => [d.date, d]));
   const weeklies = new Map(data?.weeklies.map((w) => [w.periodStart, w]));
   const monthly = data?.monthly ?? null;
+  const jobs = data?.jobs ?? [];
+  const monthJob = findJob(jobs, "monthly", month);
   const [y, m] = month.split("-");
 
   return (
@@ -56,6 +80,7 @@ export function Calendar({ month, weekStart, data, loading, today, selection, on
           }${monthly ? "border-violet-600 bg-violet-600 text-white" : "border-dashed border-violet-400 text-violet-700 hover:bg-violet-50"}`}
         >
           {Number(m)} 月月报{monthly ? ` · v${monthly.versionNo}` : ""}
+          <JobBadge job={monthJob} running="生成中" failed="失败" className="ml-2 text-xs" />
         </button>
       </div>
 
@@ -70,22 +95,27 @@ export function Calendar({ month, weekStart, data, loading, today, selection, on
         {weeks.map((week) => {
           const start = week[0];
           const w = weeklies.get(start);
+          const weekJob = findJob(jobs, "weekly", start);
           const weekSelected = selection.type === "weekly" && selection.date >= week[0] && selection.date <= week[6];
           return (
             <div key={start} className="contents">
               <button
                 type="button"
                 onClick={() => onSelect({ type: "weekly", date: start })}
-                title={`${week[0]} 至 ${week[6]} 的周报`}
+                title={`${week[0]} 至 ${week[6]} 的周报${weekJob?.status === "running" ? "（生成中）" : weekJob?.status === "failed" ? "（上次生成失败）" : ""}`}
                 className={`flex items-center justify-center rounded-md border text-xs font-medium ${
                   weekSelected ? "ring-2 ring-emerald-500 " : ""
-                }${w ? "border-emerald-600 bg-emerald-600 text-white" : "border-dashed border-emerald-400 text-emerald-700 hover:bg-emerald-50"}`}
+                }${weekJob?.status === "failed" ? "border-red-400 " : ""}${w ? "border-emerald-600 bg-emerald-600 text-white" : "border-dashed border-emerald-400 text-emerald-700 hover:bg-emerald-50"}`}
               >
-                {w ? `周报 v${w.versionNo}` : "周报"}
+                <span className="flex flex-col items-center leading-tight">
+                  <span>{w ? `周报 v${w.versionNo}` : "周报"}</span>
+                  <JobBadge job={weekJob} running="生成中" failed="失败" className="text-[10px]" />
+                </span>
               </button>
               {week.map((date) => {
                 const inMonth = date.startsWith(month);
                 const d = dailies.get(date);
+                const optJob = findJob(jobs, "optimize", date);
                 const selected = selection.type === "daily" && selection.date === date;
                 const isToday = date === today;
                 return (
@@ -93,9 +123,9 @@ export function Calendar({ month, weekStart, data, loading, today, selection, on
                     key={date}
                     type="button"
                     onClick={() => onSelect({ type: "daily", date })}
-                    aria-label={`${date}${d ? "，已有日报" : ""}`}
+                    aria-label={`${date}${d ? "，已有日报" : ""}${optJob?.status === "running" ? "，优化中" : optJob?.status === "failed" ? "，优化失败" : ""}`}
                     aria-pressed={selected}
-                    className={`relative flex h-14 flex-col items-center justify-start rounded-md border pt-1 text-sm transition ${
+                    className={`relative flex min-h-16 flex-col items-center justify-start rounded-md border pt-1 text-sm transition ${
                       selected ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:bg-slate-50"
                     } ${inMonth ? "text-slate-900" : "bg-slate-50/60 text-slate-400"} ${isToday ? "ring-1 ring-blue-400" : ""}`}
                   >
@@ -106,6 +136,7 @@ export function Calendar({ month, weekStart, data, loading, today, selection, on
                         {d.active === "optimized" && <span className="rounded bg-blue-100 px-1 text-[10px] leading-4 text-blue-700">优</span>}
                       </span>
                     )}
+                    {d && <JobBadge job={optJob} running="优化中" failed="优化失败" className="mt-0.5 text-[10px] text-blue-700" />}
                   </button>
                 );
               })}

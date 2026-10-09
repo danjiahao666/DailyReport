@@ -3,17 +3,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api-client";
 import { weekdayName } from "@/lib/dates";
-import type { DailyEntry, DailyVersion } from "@/lib/types";
-import { Button, ErrorNotice, Modal, Notice, Spinner } from "./ui";
+import type { DailyEntry, DailyVersion, JobView } from "@/lib/types";
+import { Button, ErrorNotice, JobFailed, Modal, Notice, Spinner } from "./ui";
 
 interface Props {
   date: string;
+  /** 该日期日报优化任务的最新状态（由服务端持久化，切换页面后回来仍可见） */
+  job: JobView | null;
+  onJob: (job: JobView | null) => void;
   onChanged: () => void;
 }
 
-type OptimizeResponse = { entry: DailyEntry; warnings: string[] };
-
-export function DailyPanel({ date, onChanged }: Props) {
+export function DailyPanel({ date, job, onJob, onChanged }: Props) {
   const [entry, setEntry] = useState<DailyEntry | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
@@ -24,9 +25,8 @@ export function DailyPanel({ date, onChanged }: Props) {
   const [saveError, setSaveError] = useState<ApiError | null>(null);
   const [conflict, setConflict] = useState<DailyEntry | null>(null);
 
-  const [optimizing, setOptimizing] = useState(false);
   const [optimizeError, setOptimizeError] = useState<ApiError | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [doneNote, setDoneNote] = useState(false);
 
   const [editing, setEditing] = useState<DailyVersion | null>(null);
   const [draft, setDraft] = useState("");
@@ -34,6 +34,8 @@ export function DailyPanel({ date, onChanged }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<ApiError | null>(null);
   const current = useRef(date);
+  const lastStatus = useRef(job?.status);
+  const optimizing = job?.status === "running";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -54,7 +56,8 @@ export function DailyPanel({ date, onChanged }: Props) {
     setText("");
     setSaveError(null);
     setOptimizeError(null);
-    setWarnings([]);
+    setDoneNote(false);
+    lastStatus.current = job?.status;
     setEditing(null);
     setConfirmDelete(false);
     setActionError(null);
@@ -62,18 +65,33 @@ export function DailyPanel({ date, onChanged }: Props) {
     void load();
   }, [date, load]);
 
+  // 后台优化结束（成功或失败）后重新加载日报，展示优化稿
+  useEffect(() => {
+    if (lastStatus.current === "running" && job?.status !== "running") {
+      void load();
+      if (job?.status === "succeeded") setDoneNote(true);
+    }
+    lastStatus.current = job?.status;
+  }, [job?.status, load]);
+
+  /** 启动后台优化：立即返回，期间可以切换到其他日期或页面 */
   async function optimize() {
-    setOptimizing(true);
     setOptimizeError(null);
+    setDoneNote(false);
     try {
-      const res = await api<OptimizeResponse>("POST", `/api/daily/${date}/optimize`);
-      setEntry(res.entry);
-      setWarnings(res.warnings);
-      onChanged();
+      const res = await api<{ job: JobView }>("POST", `/api/daily/${date}/optimize`);
+      onJob(res.job);
     } catch (e) {
       setOptimizeError(e as ApiError);
-    } finally {
-      setOptimizing(false);
+    }
+  }
+
+  async function dismissJob() {
+    try {
+      await api("DELETE", `/api/jobs?kind=optimize&target=${date}`);
+      onJob(null);
+    } catch (e) {
+      setActionError(e as ApiError);
     }
   }
 
@@ -86,11 +104,8 @@ export function DailyPanel({ date, onChanged }: Props) {
       setConflict(null);
       setText("");
       onChanged();
-      // 日报已保存；优化是独立的第二步，失败不影响已保存的内容
-      if (wantOptimize) {
-        setSaving(false);
-        await optimize();
-      }
+      // 日报已保存；优化是独立的第二步（后台执行），失败不影响已保存的内容
+      if (wantOptimize) await optimize();
     } catch (e) {
       const err = e as ApiError;
       if (err.code === "DAILY_EXISTS") setConflict(err.data.existing as DailyEntry);
@@ -236,14 +251,15 @@ export function DailyPanel({ date, onChanged }: Props) {
       {loadError && <ErrorNotice error={loadError} onRetry={load} />}
       {actionError && <ErrorNotice error={actionError} />}
 
-      {optimizing && <Spinner label="大模型优化中，请稍候…" />}
-      {optimizeError && (
-        <div className="space-y-1">
-          <ErrorNotice error={optimizeError} onRetry={optimize} busy={optimizing} />
-          <p className="text-xs text-slate-500">日报原文已保存，不受影响；可直接重试。</p>
-        </div>
+      {optimizing && <Spinner label="大模型正在后台优化，可以切换到其他日期或页面，完成后回来查看…" />}
+      {optimizeError && <ErrorNotice error={optimizeError} onRetry={optimize} busy={optimizing} />}
+      {job?.status === "failed" && (
+        <JobFailed job={job} note="日报原文已保存，不受影响；可直接重试。" onRetry={optimize} onDismiss={dismissJob} busy={optimizing} />
       )}
-      {warnings.map((w) => (
+      {doneNote && !optimizing && (
+        <Notice tone="info">优化完成。请对照原文，决定“采用此版本”或继续使用原文。</Notice>
+      )}
+      {(entry?.warnings ?? []).map((w) => (
         <Notice key={w} tone="warn">
           {w}
         </Notice>

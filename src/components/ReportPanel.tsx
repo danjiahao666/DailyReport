@@ -2,14 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api-client";
-import type { MonthlyPlan, MonthlySource, Report, ReportVersion, VersionOrigin } from "@/lib/types";
+import type { JobView, MonthlyPlan, MonthlySource, Report, ReportVersion, VersionOrigin } from "@/lib/types";
 import { Markdown } from "./Markdown";
-import { Button, ErrorNotice, Modal, Notice, Spinner } from "./ui";
+import { Button, ErrorNotice, JobFailed, Modal, Notice, Spinner } from "./ui";
 
 interface Props {
   kind: "weekly" | "monthly";
-  /** 周报：所在周内的任意日期；月报：YYYY-MM */
+  /** 周报：该周起始日；月报：YYYY-MM */
   anchor: string;
+  /** 该周报/月报生成任务的最新状态（由服务端持久化，切换页面后回来仍可见） */
+  job: JobView | null;
+  onJob: (job: JobView | null) => void;
   onChanged: () => void;
 }
 
@@ -25,7 +28,7 @@ function fmtTime(iso: string): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export function ReportPanel({ kind, anchor, onChanged }: Props) {
+export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
   const [report, setReport] = useState<Report | null>(null);
   const [range, setRange] = useState<{ start: string; end: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,8 +38,8 @@ export function ReportPanel({ kind, anchor, onChanged }: Props) {
   const [plan, setPlan] = useState<MonthlyPlan | null>(null);
   const [planError, setPlanError] = useState<ApiError | null>(null);
 
-  const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<ApiError | null>(null);
+  const [doneNote, setDoneNote] = useState(false);
   const [confirmRegen, setConfirmRegen] = useState<{ versionNo: number } | null>(null);
 
   const [editing, setEditing] = useState(false);
@@ -46,6 +49,8 @@ export function ReportPanel({ kind, anchor, onChanged }: Props) {
   const [viewing, setViewing] = useState<ReportVersion | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
   const key = useRef("");
+  const lastStatus = useRef(job?.status);
+  const generating = job?.status === "running";
 
   const label = kind === "weekly" ? "周报" : "月报";
   const reportUrl = kind === "weekly" ? `/api/reports/weekly?date=${anchor}` : `/api/reports/monthly?month=${anchor}`;
@@ -76,8 +81,19 @@ export function ReportPanel({ kind, anchor, onChanged }: Props) {
     setViewing(null);
     setActionError(null);
     setConfirmRegen(null);
+    setDoneNote(false);
+    lastStatus.current = job?.status;
     void load();
   }, [kind, anchor, load]);
+
+  // 后台生成结束（成功或失败）后重新加载，展示最新版本
+  useEffect(() => {
+    if (lastStatus.current === "running" && job?.status !== "running") {
+      void load();
+      if (job?.status === "succeeded") setDoneNote(true);
+    }
+    lastStatus.current = job?.status;
+  }, [job?.status, load]);
 
   // 月报：预览取数规则（含跨月周的处理方式），不调用大模型
   useEffect(() => {
@@ -92,23 +108,34 @@ export function ReportPanel({ kind, anchor, onChanged }: Props) {
     };
   }, [kind, anchor, source, report?.updatedAt]);
 
+  /**
+   * 启动后台生成：没有日报、需要确认覆盖等情况会立即返回错误；
+   * 通过校验后立即返回任务状态，期间可以切换到其他日期或页面。
+   */
   async function generate(confirm = false) {
-    setGenerating(true);
     setGenError(null);
     setConfirmRegen(null);
+    setDoneNote(false);
     try {
       const body = kind === "weekly" ? { date: anchor, confirm } : { month: anchor, source, confirm };
-      const res = await api<Report>("POST", `/api/reports/${kind}`, body);
-      setReport(res);
+      const res = await api<{ job: JobView }>("POST", `/api/reports/${kind}`, body);
       setViewing(null);
       setEditing(false);
-      onChanged();
+      onJob(res.job);
     } catch (e) {
       const err = e as ApiError;
       if (err.code === "CONFIRM_OVERWRITE_EDITED") setConfirmRegen({ versionNo: Number(err.data.currentVersionNo) });
       else setGenError(err);
-    } finally {
-      setGenerating(false);
+    }
+  }
+
+  async function dismissJob() {
+    if (!job) return;
+    try {
+      await api("DELETE", `/api/jobs?kind=${job.kind}&target=${job.target}`);
+      onJob(null);
+    } catch (e) {
+      setActionError(e as ApiError);
     }
   }
 
@@ -198,13 +225,12 @@ export function ReportPanel({ kind, anchor, onChanged }: Props) {
 
       {loading && <Spinner label="加载中…" />}
       {loadError && <ErrorNotice error={loadError} onRetry={load} />}
-      {generating && <Spinner label={`大模型正在生成${label}，请稍候…`} />}
-      {genError && (
-        <div className="space-y-1">
-          <ErrorNotice error={genError} onRetry={() => generate(false)} busy={generating} />
-          {genError.retryable && <p className="text-xs text-slate-500">已保存的日报和{label}历史版本不受影响。</p>}
-        </div>
+      {generating && <Spinner label={`大模型正在后台生成${label}，可以切换到其他日期或页面，完成后回来查看…`} />}
+      {genError && <ErrorNotice error={genError} onRetry={() => generate(false)} busy={generating} />}
+      {job?.status === "failed" && (
+        <JobFailed job={job} note={`已保存的日报和${label}历史版本不受影响；可直接重试。`} onRetry={() => generate(false)} onDismiss={dismissJob} busy={generating} />
       )}
+      {doneNote && !generating && <Notice tone="info">{label}已生成，保存为新版本。</Notice>}
       {actionError && <ErrorNotice error={actionError} />}
       {report?.outdated && (
         <Notice tone="warn" onRetry={() => generate(false)} retryLabel="重新生成" busy={generating}>

@@ -6,7 +6,7 @@
  * 用法：
  *   node scripts/fake-llm.mjs [端口，默认 4010]
  * 切换故障模式（用于验证错误提示与重试）：
- *   curl -X POST "http://127.0.0.1:4010/__mode?m=ok|500|401|429|empty|length|hang"
+ *   curl -X POST "http://127.0.0.1:4010/__mode?m=ok|slow|500|401|429|empty|length|hang"
  */
 import { createServer } from "node:http";
 
@@ -53,9 +53,10 @@ createServer((req, res) => {
   if (url.pathname === "/__stats") return res.end(JSON.stringify({ calls, mode }));
   let body = "";
   req.on("data", (d) => (body += d));
-  req.on("end", () => {
+  req.on("end", async () => {
     calls += 1;
     if (mode === "hang") return;
+    if (mode === "slow") await new Promise((r) => setTimeout(r, Number(process.env.SLOW_MS) || 2000)); // 模拟较慢的模型（默认 2 秒，可用 SLOW_MS 调整），用来观察异步任务的“进行中”状态
     const json = (status, message) => {
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { message } }));
@@ -64,7 +65,7 @@ createServer((req, res) => {
     if (mode === "401") return json(401, "Unauthorized");
     if (mode === "429") return json(429, "rate limit");
     let text = "";
-    if (mode === "ok" || mode === "length") {
+    if (mode === "ok" || mode === "slow" || mode === "length") {
       const messages = JSON.parse(body || "{}").messages ?? [];
       const system = messages.filter((m) => m.role === "system" || m.role === "developer").map((m) => m.content).join("\n");
       const user = String(messages.filter((m) => m.role === "user").at(-1)?.content ?? "");

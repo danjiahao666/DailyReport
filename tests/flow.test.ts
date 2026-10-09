@@ -1,18 +1,28 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
-import { call, setupTestEnv } from "./helpers";
+import { call, setupTestEnv, waited, waitedJob } from "./helpers";
+import { getDaily as getDailyEntry } from "@/server/daily";
+import { getReport } from "@/server/reports";
 import { POST as submitRoute } from "@/app/api/daily/route";
 import { DELETE as deleteDaily, GET as getDaily, PUT as putDaily } from "@/app/api/daily/[date]/route";
-import { POST as optimizeRoute } from "@/app/api/daily/[date]/optimize/route";
+import { POST as optimizeStart } from "@/app/api/daily/[date]/optimize/route";
 import { PUT as activeRoute } from "@/app/api/daily/[date]/active/route";
-import { GET as getWeekly, POST as genWeekly } from "@/app/api/reports/weekly/route";
-import { GET as getMonthly, POST as genMonthly } from "@/app/api/reports/monthly/route";
+import { GET as getWeekly, POST as weeklyStart } from "@/app/api/reports/weekly/route";
+import { GET as getMonthly, POST as monthlyStart } from "@/app/api/reports/monthly/route";
 import { GET as monthlyPlan } from "@/app/api/reports/monthly/plan/route";
 import { PUT as editReport } from "@/app/api/reports/[id]/route";
 import { POST as restoreReport } from "@/app/api/reports/[id]/restore/route";
 import { GET as calendar } from "@/app/api/calendar/route";
 import { PUT as putSettings } from "@/app/api/settings/route";
 import { POST as login } from "@/app/api/auth/login/route";
+
+// 优化与周报/月报生成都是异步任务：这里的包装会在启动后等待任务结束，再返回与同步版本一致的结果
+const optimizeRoute = waited(optimizeStart, (job) => {
+  const entry = getDailyEntry(job.target)!;
+  return { entry, warnings: entry.warnings };
+});
+const genWeekly = waited(weeklyStart, (job) => getReport("weekly", job.target));
+const genMonthly = waited(monthlyStart, (job) => getReport("monthly", `${job.target}-01`));
 
 const env = setupTestEnv();
 const { faux } = env;
@@ -233,7 +243,7 @@ describe("周报", () => {
     await call(putSettings, "PUT", "/api/settings", { weekStart: 1 });
   });
 
-  it("同一周期并发生成被拒绝", async () => {
+  it("同一周期重复启动只调用一次大模型（幂等）", async () => {
     await submit("2026-11-09", "周一");
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));
@@ -243,12 +253,18 @@ describe("周报", () => {
         return fauxAssistantMessage([fauxText(WEEKLY_TEXT)]);
       },
     ]);
-    const first = call(genWeekly, "POST", "/x", { date: "2026-11-09" });
+    const calls = faux.state.callCount;
+    const first = await call(weeklyStart, "POST", "/x", { date: "2026-11-09" });
+    expect(first.status).toBe(202);
+    expect(first.body.job).toMatchObject({ kind: "weekly", target: "2026-11-09", status: "running" });
+    const second = await call(weeklyStart, "POST", "/x", { date: "2026-11-10" });
+    expect(second.status).toBe(202);
+    expect(second.body.job.status).toBe("running");
     await new Promise((r) => setTimeout(r, 50));
-    const second = await call(genWeekly, "POST", "/x", { date: "2026-11-09" });
-    expect(second.body.error.code).toBe("BUSY");
+    expect(faux.state.callCount - calls).toBe(1);
     release();
-    expect((await first).status).toBe(200);
+    const done = await waitedJob("weekly", "2026-11-09");
+    expect(done.status).toBe("succeeded");
   });
 });
 
