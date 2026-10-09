@@ -44,8 +44,25 @@
 
 - 不执行 `!命令` 形式的配置值（会报错），请改用环境变量引用。
 - `models.json` 中的 provider 需要同时给出 `models` 才会生效，且会整体替换同名的内置 provider。
-- 配置目录以只读方式挂载，因此不支持需要刷新令牌的 OAuth 凭据，请使用 API Key。
-- `models.json` 修改后需重启容器；`auth.json` 与环境变量引用每次调用时重新读取。
+- 不支持需要刷新令牌的 OAuth 凭据（页面也不会覆盖 auth.json 里已有的 OAuth 凭据），请使用 API Key。
+- 在页面上保存的修改立即生效；**手工编辑 `models.json` / `settings.json` 后需重启服务**（`auth.json` 与环境变量引用每次调用时重新读取）。
+
+### 在页面上配置（推荐）
+
+右上角“大模型设置”（`/settings`）可以可视化完成上述配置，读写的就是上面这三个 pi 文件：
+
+- **自定义 provider**：新增/编辑/删除，填写接口地址、协议、密钥和模型列表；密钥写入 `auth.json`，不会写进 `models.json`。
+- **内置 provider 密钥**：为 OpenAI、Anthropic、Gemini 等填写或清除 API 密钥。
+- **默认模型**：从已配置密钥的模型中选择，写入 `settings.json`。
+- **测试连接**：对某个模型发一次极短的真实请求，立即看到成功耗时或明确的失败原因。
+
+安全约束：
+
+- **必须设置 `APP_PASSWORD` 才能修改**，否则页面只读（只能查看状态）；配置目录不可写时同样只读。
+- 接口和页面**永远不返回密钥**，只显示“已配置”和来源（`auth.json` / 环境变量名 / `models.json`）。
+- 修改采用读-改-写，保留文件里页面不认识的字段与其它 provider；文件不是合法 JSON（例如含注释）时拒绝修改，不会覆盖你的内容。
+- 接口地址只允许 `http(s)`、不允许内嵌账号密码、禁止云平台元数据地址；内网地址允许（自建网关常见），因此请保护好登录密码。
+- 环境变量 `LLM_PROVIDER` / `LLM_MODEL` 若已设置会覆盖页面选择的默认模型，页面会提示。
 
 示例见 `pi-config/*.example.json`。**不要把真实密钥提交到仓库**（`pi-config/auth.json`、`models.json`、`settings.json`、`.env` 已在 `.gitignore` 中）。
 
@@ -76,11 +93,12 @@ vi .env
 
 # 3. 模型配置（二选一或组合）
 #   a) 只用标准环境变量：在 .env 里填 OPENAI_API_KEY 等即可，可跳过本步
-#   b) 自定义端点/默认模型：
+#   b) 自定义端点/默认模型（也可以跳过这步，启动后在页面“大模型设置”里添加）：
 cp pi-config/models.example.json   pi-config/models.json     # 按需修改
 cp pi-config/settings.example.json pi-config/settings.json
 cp pi-config/auth.example.json     pi-config/auth.json       # 或把密钥放 .env，用 $MY_API_KEY 引用
-chmod 644 pi-config/*.json   # 容器以非 root 用户(uid 1000)运行，需要能读取这些文件
+# 容器以非 root 用户(uid 1000)运行；配置目录需对它可写，页面“大模型设置”才能保存
+sudo chown -R 1000:1000 pi-config
 
 # 4. 构建并启动
 docker compose up -d --build

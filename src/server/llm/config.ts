@@ -39,6 +39,9 @@ const STREAM_APIS: Record<string, () => ProviderStreams> = {
   "azure-openai-responses": azureOpenAIResponsesApi,
 };
 
+/** 支持的自定义端点协议（models.json 的 api 字段） */
+export const STREAM_API_IDS: readonly string[] = Object.keys(STREAM_APIS);
+
 interface JsonModel {
   id: string;
   name?: string;

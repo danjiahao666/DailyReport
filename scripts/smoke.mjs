@@ -184,6 +184,35 @@ async function main() {
   ok("日历同时区分日报、周报、月报", cal.json.dailies.length === 3 && cal.json.weeklies.length >= 1 && cal.json.monthly?.periodStart === "2027-01-01", { d: cal.json.dailies.length, w: cal.json.weeklies.length, m: cal.json.monthly });
   ok("删除日报", (await req("DELETE", `/api/daily/${D3}`)).status === 200);
   ok("来源变化后周报提示已过期", (await req("GET", `/api/reports/weekly?date=${D3}`)).json.report.outdated === true);
+
+  console.log("6. 大模型设置页");
+  const st = await req("GET", "/api/settings/llm");
+  ok("设置页状态可读，已设置 APP_PASSWORD 故可编辑", st.status === 200 && st.json.canEdit === true && st.json.customProviders.some((p) => p.id === "fake"), st.json);
+  ok("状态中不含任何密钥", !st.text.includes("smoke-key"));
+  const add = await req("PUT", "/api/settings/llm/provider", {
+    id: "fake2",
+    name: "第二个假模型",
+    baseUrl: `${LLM}/v1`,
+    api: "openai-completions",
+    models: [{ id: "fake-model", name: "Fake", maxTokens: 4096 }],
+    apiKey: "smoke-key-2",
+  });
+  ok("新增自定义 provider 并保存密钥", add.status === 200 && add.json.customProviders.some((p) => p.id === "fake2" && p.key.configured), add.json);
+  ok("保存后的响应不含密钥", !add.text.includes("smoke-key-2"));
+  ok("非法接口地址被拒绝", (await req("PUT", "/api/settings/llm/provider", { id: "x1", baseUrl: "ftp://x", api: "openai-completions", models: [{ id: "m" }] })).status === 400);
+  const t1 = await req("POST", "/api/settings/llm/test", { provider: "fake2", model: "fake-model" });
+  ok("测试连接成功", t1.status === 200 && t1.json.ok === true, t1.json);
+  await llmMode("401");
+  const t2 = await req("POST", "/api/settings/llm/test", { provider: "fake2", model: "fake-model" });
+  ok("测试连接失败时给出明确原因", t2.status === 503 && t2.json.error.code === "LLM_AUTH", t2.json);
+  await llmMode("ok");
+  const def = await req("PUT", "/api/settings/llm/default", { provider: "fake2", model: "fake-model" });
+  ok("设置默认模型", def.json.defaultProvider === "fake2", def.json);
+  const opt2 = await req("POST", `/api/daily/${D2}/optimize`);
+  ok("修改后无需重启，优化立即使用新的默认模型", opt2.status === 200 && opt2.json.entry.optimizedModel === "fake2/fake-model", opt2.json);
+  const del = await req("DELETE", "/api/settings/llm/provider/fake2");
+  ok("删除 provider 并清除指向它的默认模型", del.status === 200 && del.json.defaultProvider === null && !del.json.customProviders.some((p) => p.id === "fake2"), del.json);
+  ok("删除后仍可用原有模型优化", (await req("POST", `/api/daily/${D2}/optimize`)).status === 200);
 }
 
 try {

@@ -21,8 +21,9 @@ services:
     volumes:
       # SQLite 数据库。使用具名卷，避免宿主机目录权限问题；备份见 README
       - daily-report-data:/data
-      # pi 风格的模型与密钥配置（auth.json / models.json / settings.json），只读挂载
-      - ./pi-config:/pi-config:ro
+      # pi 风格的模型与密钥配置（auth.json / models.json / settings.json）。
+      # 需要可写：页面“大模型设置”会保存到这里；宿主机目录需让容器用户（uid 1000）可写：sudo chown -R 1000:1000 pi-config
+      - ./pi-config:/pi-config
     # 最小权限运行
     read_only: true
     tmpfs:

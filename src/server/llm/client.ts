@@ -12,7 +12,12 @@ export interface LlmBackend {
   model: Model<Api>;
 }
 
-export type LlmTask = "optimize" | "weekly" | "monthly";
+export type LlmTask = "optimize" | "weekly" | "monthly" | "test";
+
+export interface LlmTarget {
+  provider: string;
+  model: string;
+}
 
 export interface GenerateResult {
   text: string;
@@ -50,9 +55,15 @@ function getRuntime(): LlmRuntime {
   return runtime;
 }
 
-async function resolveBackend(): Promise<LlmBackend> {
+async function resolveBackend(target?: LlmTarget): Promise<LlmBackend> {
   if (testBackend) return testBackend;
   const rt = getRuntime();
+  if (target) {
+    // 显式指定（连通性测试）：不受 LLM_PROVIDER / LLM_MODEL 和默认模型影响
+    const model = rt.models.getModel(target.provider, target.model);
+    if (!model) throw new LlmError("NO_MODEL", `未找到模型“${target.provider}/${target.model}”，请先保存配置。`);
+    return { models: rt.models, model };
+  }
   const wantProvider = process.env.LLM_PROVIDER || undefined;
   const wantModel = process.env.LLM_MODEL || undefined;
   const provider = wantProvider ?? (wantModel ? undefined : rt.defaultProvider);
@@ -88,9 +99,15 @@ export async function generateText(input: {
   system: string;
   user: string;
   maxTokens: number;
+  /** 指定模型（缺省按默认模型解析） */
+  target?: LlmTarget;
+  /** 覆盖默认超时（毫秒） */
+  timeoutMs?: number;
+  /** 输出因长度被截断但已有文本时仍视为成功（仅用于连通性测试） */
+  allowTruncated?: boolean;
 }): Promise<GenerateResult> {
   const started = Date.now();
-  const backend = await resolveBackend();
+  const backend = await resolveBackend(input.target);
   const { models, model } = backend;
   const modelLabel = `${model.provider}/${model.id}`;
   const log = (status: string, extra: Record<string, unknown> = {}) =>
@@ -109,7 +126,7 @@ export async function generateText(input: {
     throw new LlmError("AUTH");
   }
 
-  const signal = AbortSignal.timeout(timeoutMs());
+  const signal = AbortSignal.timeout(input.timeoutMs ?? timeoutMs());
   let message;
   try {
     message = await models.completeSimple(
@@ -148,7 +165,7 @@ export async function generateText(input: {
       .trim(),
   );
 
-  if (message.stopReason === "length") {
+  if (message.stopReason === "length" && !(input.allowTruncated && text)) {
     log("truncated", usage);
     throw new LlmError("TRUNCATED");
   }

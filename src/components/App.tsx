@@ -77,6 +77,9 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
               ))}
             </select>
           </label>
+          <a href="/settings" className="text-slate-600 underline hover:text-slate-900">
+            大模型设置
+          </a>
           {authEnabled && (
             <button type="button" onClick={logout} className="text-slate-500 underline hover:text-slate-800">
               退出登录

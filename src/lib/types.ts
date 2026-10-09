@@ -109,3 +109,69 @@ export interface ApiErrorBody {
     [key: string]: unknown;
   };
 }
+
+// ---------- 大模型设置 ----------
+
+export interface LlmCustomModel {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  reasoning?: boolean;
+}
+
+/** 密钥状态：只有“是否配置”与来源说明，永远不包含密钥本身 */
+export interface LlmKeyStatus {
+  configured: boolean;
+  /** 来源说明，如 stored credential / OPENAI_API_KEY / models.json apiKey */
+  source: string | null;
+  storedInAuthJson: boolean;
+  credentialType: "api_key" | "oauth" | null;
+}
+
+export interface LlmCustomProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  api: string;
+  models: LlmCustomModel[];
+  key: LlmKeyStatus;
+}
+
+export interface LlmBuiltinProvider {
+  id: string;
+  name: string;
+  key: LlmKeyStatus;
+}
+
+export interface LlmSelectableProvider {
+  id: string;
+  name: string;
+  models: { id: string; name: string }[];
+}
+
+export interface LlmSettingsState {
+  configDir: string;
+  /** 是否允许在页面修改；为 false 时 readonlyReason 说明原因 */
+  canEdit: boolean;
+  readonlyReason: string | null;
+  /** 配置文件格式错误时的提示 */
+  configError: string | null;
+  warnings: string[];
+  /** 环境变量 LLM_PROVIDER / LLM_MODEL 会覆盖默认模型 */
+  envOverride: { provider: string | null; model: string | null } | null;
+  apis: string[];
+  defaultProvider: string | null;
+  defaultModel: string | null;
+  customProviders: LlmCustomProvider[];
+  builtinProviders: LlmBuiltinProvider[];
+  /** 已配置密钥、可作为默认模型的 provider 及其模型 */
+  selectable: LlmSelectableProvider[];
+}
+
+export interface LlmTestResult {
+  ok: true;
+  provider: string;
+  model: string;
+  ms: number;
+}
