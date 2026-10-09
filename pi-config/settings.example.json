@@ -1,0 +1,4 @@
+{
+  "defaultProvider": "my-gateway",
+  "defaultModel": "qwen-plus"
+}

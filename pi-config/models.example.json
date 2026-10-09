@@ -1,0 +1,13 @@
+{
+  "providers": {
+    "my-gateway": {
+      "name": "我的网关（OpenAI 兼容）",
+      "baseUrl": "https://llm.example.com/v1",
+      "api": "openai-completions",
+      "apiKey": "$MY_API_KEY",
+      "models": [
+        { "id": "qwen-plus", "name": "Qwen Plus", "contextWindow": 131072, "maxTokens": 8192 }
+      ]
+    }
+  }
+}

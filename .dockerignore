@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.gitignore
+data
+.env
+.env.*
+!.env.example
+pi-config/auth.json
+pi-config/models.json
+pi-config/settings.json
+tests
+*.tsbuildinfo
+npm-debug.log*
+Dockerfile
+docker-compose.yml
+README.md

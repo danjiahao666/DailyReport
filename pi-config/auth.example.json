@@ -1,0 +1,4 @@
+{
+  "openai": { "type": "api_key", "key": "$OPENAI_API_KEY" },
+  "my-gateway": { "type": "api_key", "key": "sk-请替换为真实密钥" }
+}

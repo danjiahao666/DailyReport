@@ -1,0 +1,48 @@
+# 一键部署：docker compose up -d --build
+# 首次部署前：cp .env.example .env，并按 README 准备 pi-config/ 下的模型与密钥配置。
+name: daily-report
+
+services:
+  app:
+    build:
+      context: .
+    image: daily-report:0.1.0
+    container_name: daily-report
+    restart: unless-stopped
+    ports:
+      # 默认只监听本机回环地址，由反向代理（Nginx / Caddy 等）对外提供 HTTPS；
+      # 需要直接对外访问时，在 .env 中设置 BIND_ADDR=0.0.0.0
+      - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      # SQLite 数据库。使用具名卷，避免宿主机目录权限问题；备份见 README
+      - daily-report-data:/data
+      # pi 风格的模型与密钥配置（auth.json / models.json / settings.json），只读挂载
+      - ./pi-config:/pi-config:ro
+    # 最小权限运行
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  daily-report-data:

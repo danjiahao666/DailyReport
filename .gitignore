@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+data
+.env
+.env.local
+*.tsbuildinfo
+next-env.d.ts
+pi-config/auth.json
+pi-config/models.json
+pi-config/settings.json
