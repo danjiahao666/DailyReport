@@ -103,6 +103,18 @@ function resolveHeaders(headers: Record<string, string> | undefined): Record<str
   return out;
 }
 
+/**
+ * 推理模型走 Anthropic Messages 时，pi-ai 在“不开启思考”的调用里会多发 `thinking: {"type":"disabled"}`。
+ * Claude 官方接口认这个字段，但 grok 等经由 New API 之类网关转换的上游会直接 400。
+ * 而 Anthropic 协议下省略该字段本身就等于不思考，所以默认把 off 标为 null（不发送）；
+ * 用户在 models.json 里显式配置了 off 时，以用户配置为准。
+ */
+function defaultThinkingLevelMap(api: string, def: JsonModel): JsonModel["thinkingLevelMap"] {
+  if (api !== "anthropic-messages" || !def.reasoning) return def.thinkingLevelMap;
+  const map = isRecord(def.thinkingLevelMap) ? def.thinkingLevelMap : {};
+  return "off" in map ? map : { ...map, off: null };
+}
+
 function toModel(providerId: string, def: JsonModel, p: JsonProvider): Model<Api> {
   const api = def.api ?? p.api;
   if (!api) throw new Error(`models.json: provider "${providerId}" 的模型 "${def.id}" 未指定 api`);
@@ -117,7 +129,7 @@ function toModel(providerId: string, def: JsonModel, p: JsonProvider): Model<Api
     provider: providerId,
     baseUrl,
     reasoning: def.reasoning ?? false,
-    thinkingLevelMap: def.thinkingLevelMap,
+    thinkingLevelMap: defaultThinkingLevelMap(api, def),
     input: def.input ?? ["text"],
     cost: def.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: def.contextWindow ?? 128000,
