@@ -16,6 +16,8 @@ import { generateText, resetLlmRuntime } from "./llm/client";
 import { buildRuntime, configDir, STREAM_API_IDS, type LlmRuntime } from "./llm/config";
 import { ConfigFileError, dirWritable, isRecord, readJsonObject, writeJsonAtomic } from "./llm/config-files";
 import { FileCredentialStore } from "./llm/credentials";
+import { fetchRemoteModels } from "./llm/model-list";
+import { resolveConfigValue } from "./llm/config-value";
 import { authEnabled } from "./session";
 
 /**
@@ -67,7 +69,7 @@ function guard<T>(fn: () => T): T {
 
 export function readonlyReason(): string | null {
   if (!authEnabled()) {
-    return "未设置 APP_PASSWORD，出于安全考虑设置页为只读（修改涉及密钥与接口地址）。请在 .env 中设置 APP_PASSWORD 并重启，或直接编辑配置文件。";
+    return "未启用访问保护，出于安全考虑设置页为只读（修改涉及密钥与接口地址）。请在 .env 中设置 APP_PASSWORD 并重启，或到“设置中心”里设置访问密码，或直接编辑配置文件。";
   }
   if (!dirWritable(configDir())) {
     return "配置目录不可写，无法在页面保存。Docker 部署请确认 ./pi-config 未以只读方式挂载，且容器用户（uid 1000）对它有写权限。";
@@ -409,6 +411,51 @@ export function setDefaultModel(providerInput: unknown, modelInput: unknown): vo
     writeJsonAtomic(f.settings, settings);
   });
   resetLlmRuntime();
+}
+
+/**
+ * 获取自定义 provider 的模型列表（用于添加 / 编辑页面的下拉选择）。
+ *
+ * 密钥来源：表单里新填的密钥优先；没填且是在编辑已有 provider 时，沿用已保存的密钥
+ * （auth.json，其次 models.json 的 apiKey）。但只有接口地址没变时才沿用——
+ * 否则改了地址再点按钮，已保存的密钥会被发往一个从未确认过的新地址。
+ * 需要编辑权限：这个动作会带着密钥向用户填写的地址发起请求。
+ */
+export async function listRemoteModels(body: Record<string, unknown>) {
+  assertCanEdit();
+  const extra = Object.keys(body).filter((k) => !["baseUrl", "api", "apiKey", "providerId"].includes(k));
+  if (extra.length > 0) throw bad(`请求包含不支持的字段：${extra.slice(0, 5).join("、")}`);
+  const baseUrl = validateBaseUrl(body.baseUrl);
+  const api = validateApi(body.api);
+
+  let key: string | undefined;
+  if (body.apiKey !== undefined && body.apiKey !== null && body.apiKey !== "") {
+    const typed = validateKey(body.apiKey);
+    key = resolveConfigValue(typed);
+    if (key === undefined) throw bad("API 密钥引用的环境变量没有设置，请检查变量名，或直接填写密钥。");
+  } else if (body.providerId !== undefined && body.providerId !== null && body.providerId !== "") {
+    const id = validateId(body.providerId, "provider 标识");
+    const f = files();
+    const saved = guard(() => {
+      const provider = (readProviders(readJsonObject(f.models) ?? {}) as Record<string, unknown>)[id];
+      return isRecord(provider) ? provider : undefined;
+    });
+    if (saved) {
+      if (str(saved.baseUrl) !== baseUrl) {
+        throw bad("接口地址已修改，出于安全考虑不会把已保存的密钥发往新地址。请重新填写 API 密钥后再获取。");
+      }
+      const cred = await new FileCredentialStore(f.auth).read(id).catch(() => undefined);
+      if (cred?.type === "api_key" && cred.key) key = cred.key;
+      else if (typeof saved.apiKey === "string" && saved.apiKey !== "") {
+        try {
+          key = resolveConfigValue(saved.apiKey);
+        } catch {
+          key = undefined;
+        }
+      }
+    }
+  }
+  return { models: await fetchRemoteModels({ baseUrl, api, key }) };
 }
 
 /** 发一次极短的真实请求，验证端点、密钥与模型 ID 是否可用；失败时抛出带中文提示的 LlmError */

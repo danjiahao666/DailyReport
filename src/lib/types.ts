@@ -175,6 +175,14 @@ export interface LlmSettingsState {
   selectable: LlmSelectableProvider[];
 }
 
+/** 从供应商接口拉取到的一个模型；除 id 外都是可选的，接口给了才有 */
+export interface LlmRemoteModel {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
 export interface LlmTestResult {
   ok: true;
   provider: string;
