@@ -97,6 +97,8 @@ node scripts/subset-font.mjs     # 可用环境变量 PYFTSUBSET 指定 pyftsubs
 
 服务器需安装 Docker 及 Compose 插件。
 
+> 完整的服务器部署流程（含宝塔反向代理与 HTTPS、日常更新、备份与回滚、故障排查）见 [docs/DEPLOY.md](docs/DEPLOY.md)。
+
 ```bash
 # 1. 获取代码后进入目录
 cd DailyReport
@@ -241,7 +243,8 @@ src/server/         数据库、日报/周报/月报服务、会话
 src/server/llm/     pi-ai 封装：配置加载、凭据存储、错误映射、提示词、事实校验
 src/components/     日历、面板、设置中心与像素风组件
 src/lib/prefs.ts    设置中心的共享定义（取值范围、状态类型）；后端见 src/server/prefs.ts
-scripts/            fake-llm.mjs（假模型）、smoke.mjs（冒烟）
+scripts/            fake-llm.mjs（假模型）、smoke.mjs（冒烟）、pack-prebuilt.mjs（预构建打包）
+docs/DEPLOY.md      服务器部署文档
 pi-config/          模型与密钥配置示例
 ```
 
