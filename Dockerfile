@@ -6,8 +6,11 @@ ARG NODE_IMAGE=node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+# 可选的 npm 源（国内服务器访问 npmjs.org 慢时设置，如 https://registry.npmmirror.com）；留空则用默认源。
+# lockfile 中的 registry.npmjs.org 地址会被自动替换为该源，完整性校验（integrity）不变。
+ARG NPM_REGISTRY=""
 # 不执行依赖的生命周期脚本；本项目依赖均为纯 JS / 预编译产物，SQLite 使用 Node 内置的 node:sqlite
-RUN npm ci --ignore-scripts
+RUN npm ci --ignore-scripts ${NPM_REGISTRY:+--registry=${NPM_REGISTRY}}
 
 # ---------- 构建 ----------
 FROM ${NODE_IMAGE} AS build

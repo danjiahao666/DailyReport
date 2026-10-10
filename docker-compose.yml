@@ -6,6 +6,10 @@ services:
   app:
     build:
       context: .
+      args:
+        # 构建加速（均可在 .env 中设置，留空即默认）：npm 源、基础镜像地址
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        NODE_IMAGE: ${NODE_IMAGE:-node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20}
     image: daily-report:0.1.0
     container_name: daily-report
     restart: unless-stopped
