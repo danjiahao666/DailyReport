@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api-client";
 import type { JobView, MonthlyPlan, MonthlySource, Report, ReportVersion, VersionOrigin } from "@/lib/types";
 import { Markdown } from "./Markdown";
+import { Icon } from "./pixel";
 import { Button, ErrorNotice, JobFailed, Modal, Notice, Spinner } from "./ui";
 
 interface Props {
@@ -170,170 +171,175 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
     kind === "weekly" ? `周报 ${range ? `${range.start} 至 ${range.end}` : ""}` : `${anchor.replace("-", " 年 ")} 月月报`;
 
   return (
-    <section aria-label={label} className="space-y-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <header className="flex flex-wrap items-center justify-between gap-2">
+    <section aria-label={label} className="pixel-panel">
+      <header className="pixel-titlebar">
         <div>
-          <h2 className="text-lg font-semibold">{title}</h2>
+          <h2 className="flex items-center gap-2 font-pixel text-lg">
+            {kind === "weekly" ? <Icon.Scroll scale={3} /> : <Icon.Chest scale={3} />}
+            {title}
+          </h2>
           {report?.current && (
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-parchment/80">
               当前 v{report.current.versionNo} · {ORIGIN_LABEL[report.current.origin]}
               {report.current.model ? ` · ${report.current.model}` : ""} · {fmtTime(report.current.createdAt)}
             </p>
           )}
         </div>
-        <Button variant="primary" onClick={() => generate(false)} disabled={generating || loading}>
+        <Button size="sm" variant="primary" onClick={() => generate(false)} disabled={generating || loading}>
           {generating ? "生成中…" : report ? `重新生成${label}` : `生成${label}`}
         </Button>
       </header>
 
-      {kind === "monthly" && (
-        <fieldset className="space-y-2 rounded-md border border-slate-200 p-3">
-          <legend className="px-1 text-sm font-medium">数据来源</legend>
-          <div className="flex flex-wrap gap-4 text-sm">
-            <label className="flex items-center gap-1.5">
-              <input type="radio" name="source" checked={source === "daily"} onChange={() => setSource("daily")} />
-              本月日报
-            </label>
-            <label className="flex items-center gap-1.5">
-              <input type="radio" name="source" checked={source === "weekly"} onChange={() => setSource("weekly")} />
-              已有周报（跨月周与无周报的周自动补用日报）
-            </label>
+      <div className="space-y-4 p-4">
+        {kind === "monthly" && (
+          <fieldset className="pixel-card space-y-2 p-3">
+            <legend className="bg-parchment px-1.5 font-pixel text-base">数据来源</legend>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <label className="flex items-center gap-1.5">
+                <input type="radio" className="pixel-check" name="source" checked={source === "daily"} onChange={() => setSource("daily")} />
+                本月日报
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input type="radio" className="pixel-check" name="source" checked={source === "weekly"} onChange={() => setSource("weekly")} />
+                已有周报（跨月周与无周报的周自动补用日报）
+              </label>
+            </div>
+            {planError && <ErrorNotice error={planError} />}
+            {plan && (
+              <details className="text-xs text-ink-soft" open>
+                <summary className="cursor-pointer text-ink">
+                  取数规则：{plan.weeklyCount} 份周报 + {plan.dailyCount} 天日报（跨月周按日期归属拆分，只取属于本月的日期）
+                </summary>
+                <ul className="mt-1.5 space-y-1">
+                  {plan.weeks.map((w) => (
+                    <li key={w.weekStart} className="flex gap-2">
+                      <span className="w-44 shrink-0 tabular-nums">
+                        {w.from.slice(5)} ~ {w.to.slice(5)}
+                        {!w.full && <span className="pixel-tag pixel-tag--amber ml-1 !text-[10px] !leading-4">跨月</span>}
+                      </span>
+                      <span>
+                        {w.use === "weekly" ? "周报" : w.use === "daily" ? `日报 ${w.dailyCount} 天` : "无数据"} · {w.reason}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </fieldset>
+        )}
+
+        {loading && <Spinner label="加载中…" />}
+        {loadError && <ErrorNotice error={loadError} onRetry={load} />}
+        {generating && <Spinner label={`大模型正在后台生成${label}，可以切换到其他日期或页面，完成后回来查看…`} />}
+        {genError && <ErrorNotice error={genError} onRetry={() => generate(false)} busy={generating} />}
+        {job?.status === "failed" && (
+          <JobFailed job={job} note={`已保存的日报和${label}历史版本不受影响；可直接重试。`} onRetry={() => generate(false)} onDismiss={dismissJob} busy={generating} />
+        )}
+        {doneNote && !generating && <Notice tone="info">{label}已生成，保存为新版本。</Notice>}
+        {actionError && <ErrorNotice error={actionError} />}
+        {report?.outdated && (
+          <Notice tone="warn" onRetry={() => generate(false)} retryLabel="重新生成" busy={generating}>
+            自上次生成后，来源日报{kind === "monthly" ? "或周报" : ""}已发生变化，内容可能不是最新的。
+          </Notice>
+        )}
+
+        {!loading && !loadError && !report && !genError && (
+          <p className="pixel-well border-dashed p-4 text-sm text-ink-soft">
+            尚未生成{label}。点击右上角“生成{label}”，将汇总{kind === "weekly" ? "该周" : "该月"}的{kind === "weekly" || source === "daily" ? "日报" : "周报与日报"}。
+            {kind === "weekly" ? "如果该周没有日报，会直接提示，不会调用大模型。" : ""}
+          </p>
+        )}
+
+        {shown && (
+          <div className="space-y-2">
+            {isHistorical && (
+              <Notice tone="info">
+                正在查看历史版本 v{viewing!.versionNo}（{ORIGIN_LABEL[viewing!.origin]} · {fmtTime(viewing!.createdAt)}）
+                <span className="ml-2 inline-flex gap-1.5 align-middle">
+                  <Button size="sm" onClick={() => restore(viewing!)}>
+                    恢复为当前版本
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setViewing(null)}>
+                    返回当前版本
+                  </Button>
+                </span>
+              </Notice>
+            )}
+            {editing ? (
+              <div className="space-y-2">
+                <textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  rows={16}
+                  maxLength={50000}
+                  className="pixel-field font-mono"
+                  aria-label={`编辑${label}`}
+                />
+                {editError && <ErrorNotice error={editError} />}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="primary" onClick={saveEdit} disabled={draft.trim() === ""}>
+                    保存为新版本
+                  </Button>
+                  <Button onClick={() => setEditing(false)}>取消</Button>
+                  <span className="text-xs text-muted">保存会新增一个版本，历史版本不会被覆盖。</span>
+                </div>
+              </div>
+            ) : (
+              <div className="pixel-well p-4">
+                <Markdown text={shown.content} />
+              </div>
+            )}
+            {!editing && !isHistorical && (
+              <Button
+                onClick={() => {
+                  setDraft(shown.content);
+                  setEditing(true);
+                  setEditError(null);
+                }}
+              >
+                编辑
+              </Button>
+            )}
           </div>
-          {planError && <ErrorNotice error={planError} />}
-          {plan && (
-            <details className="text-xs text-slate-600" open>
-              <summary className="cursor-pointer text-slate-700">
-                取数规则：{plan.weeklyCount} 份周报 + {plan.dailyCount} 天日报（跨月周按日期归属拆分，只取属于本月的日期）
-              </summary>
-              <ul className="mt-1 space-y-0.5">
-                {plan.weeks.map((w) => (
-                  <li key={w.weekStart} className="flex gap-2">
-                    <span className="w-44 shrink-0 tabular-nums">
-                      {w.from.slice(5)} ~ {w.to.slice(5)}
-                      {!w.full && <span className="ml-1 rounded bg-amber-100 px-1 text-amber-800">跨月</span>}
+        )}
+
+        {report && report.versions.length > 0 && (
+          <details className="pixel-card p-3">
+            <summary className="cursor-pointer font-pixel text-base">历史版本（{report.versions.length}）</summary>
+            <ul className="mt-2 divide-y-2 divide-dashed divide-ink/20 text-sm">
+              {report.versions.map((v) => {
+                const isCurrent = v.id === report.currentVersionId;
+                return (
+                  <li key={v.id} className="flex items-center justify-between gap-2 py-2">
+                    <span className="min-w-0">
+                      <span className="font-semibold">v{v.versionNo}</span>{" "}
+                      <span className="text-ink-soft">{ORIGIN_LABEL[v.origin]}</span>
+                      {v.meta?.restoredFrom ? <span className="text-muted">（来自 v{v.meta.restoredFrom}）</span> : null}
+                      {v.model && <span className="text-muted"> · {v.model}</span>}
+                      <span className="text-muted"> · {fmtTime(v.createdAt)}</span>
+                      {isCurrent && <span className="pixel-tag pixel-tag--green ml-1.5">当前</span>}
                     </span>
-                    <span>
-                      {w.use === "weekly" ? "周报" : w.use === "daily" ? `日报 ${w.dailyCount} 天` : "无数据"} · {w.reason}
+                    <span className="flex shrink-0 gap-1.5">
+                      <Button size="sm" onClick={() => setViewing(v)} disabled={editing}>
+                        查看
+                      </Button>
+                      {!isCurrent && (
+                        <Button size="sm" onClick={() => restore(v)} disabled={editing}>
+                          恢复
+                        </Button>
+                      )}
                     </span>
                   </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </fieldset>
-      )}
-
-      {loading && <Spinner label="加载中…" />}
-      {loadError && <ErrorNotice error={loadError} onRetry={load} />}
-      {generating && <Spinner label={`大模型正在后台生成${label}，可以切换到其他日期或页面，完成后回来查看…`} />}
-      {genError && <ErrorNotice error={genError} onRetry={() => generate(false)} busy={generating} />}
-      {job?.status === "failed" && (
-        <JobFailed job={job} note={`已保存的日报和${label}历史版本不受影响；可直接重试。`} onRetry={() => generate(false)} onDismiss={dismissJob} busy={generating} />
-      )}
-      {doneNote && !generating && <Notice tone="info">{label}已生成，保存为新版本。</Notice>}
-      {actionError && <ErrorNotice error={actionError} />}
-      {report?.outdated && (
-        <Notice tone="warn" onRetry={() => generate(false)} retryLabel="重新生成" busy={generating}>
-          自上次生成后，来源日报{kind === "monthly" ? "或周报" : ""}已发生变化，内容可能不是最新的。
-        </Notice>
-      )}
-
-      {!loading && !loadError && !report && !genError && (
-        <p className="rounded-md bg-slate-50 p-4 text-sm text-slate-600">
-          尚未生成{label}。点击右上角“生成{label}”，将汇总{kind === "weekly" ? "该周" : "该月"}的{kind === "weekly" || source === "daily" ? "日报" : "周报与日报"}。
-          {kind === "weekly" ? "如果该周没有日报，会直接提示，不会调用大模型。" : ""}
-        </p>
-      )}
-
-      {shown && (
-        <div className="space-y-2">
-          {isHistorical && (
-            <Notice tone="info">
-              正在查看历史版本 v{viewing!.versionNo}（{ORIGIN_LABEL[viewing!.origin]} · {fmtTime(viewing!.createdAt)}）
-              <span className="ml-2 inline-flex gap-1">
-                <Button className="px-2 py-0.5 text-xs" onClick={() => restore(viewing!)}>
-                  恢复为当前版本
-                </Button>
-                <Button className="px-2 py-0.5 text-xs" variant="ghost" onClick={() => setViewing(null)}>
-                  返回当前版本
-                </Button>
-              </span>
-            </Notice>
-          )}
-          {editing ? (
-            <div className="space-y-2">
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                rows={16}
-                maxLength={50000}
-                className="w-full rounded-md border border-slate-300 p-2 font-mono text-sm"
-                aria-label={`编辑${label}`}
-              />
-              {editError && <ErrorNotice error={editError} />}
-              <div className="flex items-center gap-2">
-                <Button variant="primary" onClick={saveEdit} disabled={draft.trim() === ""}>
-                  保存为新版本
-                </Button>
-                <Button onClick={() => setEditing(false)}>取消</Button>
-                <span className="text-xs text-slate-500">保存会新增一个版本，历史版本不会被覆盖。</span>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-md border border-slate-200 bg-slate-50/50 p-4">
-              <Markdown text={shown.content} />
-            </div>
-          )}
-          {!editing && !isHistorical && (
-            <Button
-              onClick={() => {
-                setDraft(shown.content);
-                setEditing(true);
-                setEditError(null);
-              }}
-            >
-              编辑
-            </Button>
-          )}
-        </div>
-      )}
-
-      {report && report.versions.length > 0 && (
-        <details className="rounded-md border border-slate-200 p-3">
-          <summary className="cursor-pointer text-sm font-medium">历史版本（{report.versions.length}）</summary>
-          <ul className="mt-2 divide-y divide-slate-100 text-sm">
-            {report.versions.map((v) => {
-              const isCurrent = v.id === report.currentVersionId;
-              return (
-                <li key={v.id} className="flex items-center justify-between gap-2 py-1.5">
-                  <span className="min-w-0">
-                    <span className="font-medium">v{v.versionNo}</span>{" "}
-                    <span className="text-slate-600">{ORIGIN_LABEL[v.origin]}</span>
-                    {v.meta?.restoredFrom ? <span className="text-slate-400">（来自 v{v.meta.restoredFrom}）</span> : null}
-                    {v.model && <span className="text-slate-400"> · {v.model}</span>}
-                    <span className="text-slate-400"> · {fmtTime(v.createdAt)}</span>
-                    {isCurrent && <span className="ml-1 rounded bg-emerald-100 px-1.5 text-xs text-emerald-800">当前</span>}
-                  </span>
-                  <span className="flex shrink-0 gap-1">
-                    <Button className="px-2 py-0.5 text-xs" onClick={() => setViewing(v)} disabled={editing}>
-                      查看
-                    </Button>
-                    {!isCurrent && (
-                      <Button className="px-2 py-0.5 text-xs" onClick={() => restore(v)} disabled={editing}>
-                        恢复
-                      </Button>
-                    )}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </details>
-      )}
+                );
+              })}
+            </ul>
+          </details>
+        )}
+      </div>
 
       {confirmRegen && (
         <Modal title={`重新生成${label}？`} onClose={() => setConfirmRegen(null)}>
-          <p className="mb-4 text-sm text-slate-700">
+          <p className="mb-4 text-sm text-ink-soft">
             当前版本（v{confirmRegen.versionNo}）包含你的手动编辑或恢复内容。重新生成会新增一个版本并设为当前版本；
             现有内容<strong>不会被删除</strong>，仍可在历史版本中查看和恢复。
           </p>

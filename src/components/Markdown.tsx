@@ -22,7 +22,7 @@ export function Markdown({ text }: { text: string }) {
     const items = list;
     list = [];
     nodes.push(
-      <ul key={`ul-${nodes.length}`} className="my-1 list-disc space-y-0.5 pl-5">
+      <ul key={`ul-${nodes.length}`} className="my-1 list-[square] space-y-0.5 pl-5 marker:text-ember">
         {items.map((it, i) => (
           <li key={i}>{inline(it)}</li>
         ))}
@@ -40,7 +40,7 @@ export function Markdown({ text }: { text: string }) {
     flush();
     if (heading) {
       nodes.push(
-        <h4 key={nodes.length} className="mb-1 mt-3 text-sm font-semibold text-slate-900 first:mt-0">
+        <h4 key={nodes.length} className="mb-1 mt-4 border-b-2 border-dashed border-ink/25 pb-0.5 font-pixel text-base text-ink first:mt-0">
           {inline(heading[2])}
         </h4>,
       );
@@ -53,5 +53,5 @@ export function Markdown({ text }: { text: string }) {
     }
   }
   flush();
-  return <div className="text-sm leading-relaxed text-slate-800">{nodes}</div>;
+  return <div className="text-sm leading-relaxed text-ink">{nodes}</div>;
 }

@@ -1,19 +1,652 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────
+   2D 像素卡通风格。视觉语言取自同级目录的 ai-model-world：
+   深蓝灰的夜色底、米黄「羊皮纸」面板、墨色粗描边 + 硬投影、金色强调。
+
+   像素字体（Fusion Pixel，OFL-1.1）只用于短字符串——站名、面板标题、标签；
+   正文与输入框一律用系统无衬线，中文像素字体在小字号下笔画会粘连，读长文很吃力。
+   字体由 layout.tsx 用 next/font/local 注入 --font-pixel-face，
+   构建后落在 _next/static，不依赖 public 目录，也不会被登录保护拦截。
+   ───────────────────────────────────────────────────────────── */
+
+@theme {
+  --font-pixel: var(--font-pixel-face), ui-monospace, monospace;
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Segoe UI", Roboto, sans-serif;
+
+  /* 夜空与大地 */
+  --color-void: #0d1017;
+  --color-dusk: #1a1f2b;
+  --color-twilight: #3b4b6b;
+  --color-ember: #b96a4a;
+  --color-dawn: #e9a663;
+  --color-gold: #f2cf6a;
+  --color-ground: #202634;
+  --color-grass: #4b7d5a;
+  --color-grass-dark: #34573f;
+  --color-stone-dark: #3a4150;
+
+  /* 界面：墨线与羊皮纸 */
+  --color-ink: #10141c;
+  --color-ink-soft: #3a4253;
+  --color-muted: #6c654f;
+  --color-parchment: #ece4d0;
+  --color-parchment-dim: #c9bc9d;
+  --color-parchment-lit: #fbf6ea;
+
+  /* 语义色：浅底（面板上的色块）与深字（压在浅底上的文字） */
+  --color-sky: #62b6e0;
+  --color-sky-soft: #c6e4f2;
+  --color-sky-deep: #1f5f8a;
+  --color-mint: #7fd58a;
+  --color-mint-soft: #cdeccf;
+  --color-mint-deep: #2a6e45;
+  --color-coral: #e2705c;
+  --color-coral-soft: #f6cdc4;
+  --color-coral-deep: #a63b2a;
+  --color-amber-soft: #f6e2a8;
+  --color-amber-deep: #7a5210;
+  --color-violet: #9b86d6;
+  --color-violet-soft: #ddd3f4;
+  --color-violet-deep: #5a45a0;
+
+  /* 像素世界没有圆角。rounded-full 保留给个别圆形元素 */
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   主题：白天 / 夜晚。
+   当前主题由 <html data-theme="day|night"> 决定；没有该属性时按夜晚处理
+   （首次访问、禁用 JS 都是夜晚）。layout.tsx 里的内联脚本会在首次绘制前
+   从 localStorage 恢复上次的选择，所以刷新不会闪。
+
+   只有「场景」和「页面底色」随主题变：天空、草地、屋子与树、页面背景与页面上的直接文字。
+   面板始终是米黄羊皮纸 + 墨色描边，两个主题下对比度都不用再调。
+   这些变量写成普通自定义属性而不是 @theme：Tailwind 只会输出被工具类引用到的主题变量，
+   只在 TSX 内联样式里用的变量会被摇掉。
+   ───────────────────────────────────────────────────────────── */
 :root {
-  color-scheme: light;
+  /* 夜晚 */
+  --page-bg: #202634;
+  --page-glow: rgb(233 166 99 / 0.05);
+  --page-text: #ece4d0;
+  --page-text-dim: rgb(236 228 208 / 0.65);
+  --titlebar-bg: #1a1f2b;
+
+  --sky-gradient: linear-gradient(100deg, #0b0e15 0%, #141a2b 40%, #222d52 75%, #34406a 100%);
+  --sky-glow: rgb(120 140 220 / 0.16);
+  --cloud-k: 1;
+  --star-k: 1;
+
+  --grass-top: #6d9e73;
+  --grass-mid: #4b7d5a;
+  --grass-low: #34573f;
+  --dirt: #3a4150;
+
+  --house-roof: #2d3752;
+  --house-wall: #1d2436;
+  --house-light: #f2cf6a;
+  --house-door: #0f131c;
+  --tree-light: #386a47;
+  --tree-dark: #2a4f37;
+  --tree-trunk: #1d2436;
 }
 
-body {
-  background: #f6f7f9;
-  color: #1f2933;
-  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+html[data-theme="day"] {
+  --page-bg: #a9d78b;
+  --page-glow: rgb(255 255 255 / 0.28);
+  --page-text: #10141c;
+  --page-text-dim: rgb(16 20 28 / 0.62);
+  --titlebar-bg: #2b5584;
+
+  --sky-gradient: linear-gradient(180deg, #56b2ee 0%, #8fd3f6 62%, #d3effb 100%);
+  --sky-glow: rgb(255 255 255 / 0.4);
+  --cloud-k: 2.4;
+  --star-k: 0;
+
+  --grass-top: #9be06f;
+  --grass-mid: #62b94d;
+  --grass-low: #3f8f3a;
+  --dirt: #8a6a4a;
+
+  --house-roof: #d9664f;
+  --house-wall: #f3e3c0;
+  --house-light: #7ec8f0;
+  --house-door: #8a5a3a;
+  --tree-light: #5fbf5a;
+  --tree-dark: #3c9a48;
+  --tree-trunk: #7a5232;
 }
 
-button:focus-visible,
-textarea:focus-visible,
-input:focus-visible,
-select:focus-visible {
-  outline: 2px solid #2563eb;
-  outline-offset: 1px;
+/* 太阳与月亮在同一个位置，按主题二选一。写在层外，保证压得过工具类的 display */
+.sky-stars {
+  opacity: var(--star-k);
+}
+.sky-moon {
+  display: block;
+}
+.sky-sun {
+  display: none;
+}
+html[data-theme="day"] .sky-moon {
+  display: none;
+}
+html[data-theme="day"] .sky-sun {
+  display: block;
+}
+
+/* 切换按钮里「点了会变成什么」的那一半 */
+.theme-when-day {
+  display: none !important;
+}
+html[data-theme="day"] .theme-when-day {
+  display: inline-flex !important;
+}
+html[data-theme="day"] .theme-when-night {
+  display: none !important;
+}
+
+.site-footer {
+  color: var(--page-text-dim);
+}
+.site-footer a:hover {
+  color: var(--page-text);
+}
+
+@layer base {
+  html {
+    font-size: 16px;
+    background: var(--page-bg);
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.65;
+    /* 面板外的字色随主题走（夜里羊皮纸色、白天墨色）；面板自己会把字色固定为墨色 */
+    color: var(--page-text);
+    background-color: var(--page-bg);
+    /* 顶部承接天空余光，往下略微压暗。正文后面必须安静，所以不铺任何规则网格 */
+    background-image:
+      linear-gradient(180deg, var(--page-glow) 0%, transparent 360px),
+      linear-gradient(180deg, transparent 60%, rgb(0 0 0 / 0.12) 100%);
+    font-synthesis: none;
+  }
+
+  .font-pixel {
+    font-family: var(--font-pixel);
+    -webkit-font-smoothing: none;
+    letter-spacing: 0.02em;
+  }
+
+  /* 一切像素素材禁止插值缩放 */
+  img,
+  canvas,
+  svg {
+    image-rendering: pixelated;
+  }
+
+  ::selection {
+    background: var(--color-gold);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-dawn);
+    outline-offset: 1px;
+  }
+}
+
+@layer components {
+  /* 页面内容壳：页头与正文共用，保证左右对齐 */
+  .page-shell {
+    margin-inline: auto;
+    width: 100%;
+    max-width: 72rem;
+    padding-inline: 1rem;
+  }
+  @media (min-width: 768px) {
+    .page-shell {
+      padding-inline: 1.5rem;
+    }
+  }
+
+  /* ── 面板 ───────────────────────────────────────────── */
+
+  /* 经典 16 位 UI 立体边框：外描边 + 左上高光 + 右下暗面 + 硬投影，全用 box-shadow，任意尺寸不失真 */
+  .pixel-panel {
+    background: var(--color-parchment);
+    color: var(--color-ink);
+    border: 3px solid var(--color-ink);
+    box-shadow:
+      inset -3px -3px 0 0 var(--color-parchment-dim),
+      inset 3px 3px 0 0 var(--color-parchment-lit),
+      4px 4px 0 0 rgb(0 0 0 / 0.4);
+  }
+
+  /* 面板顶部的深色标题条，像游戏窗口的标题栏 */
+  .pixel-titlebar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    background: var(--titlebar-bg);
+    color: var(--color-gold);
+    border-bottom: 3px solid var(--color-ink);
+  }
+
+  /* 嵌在面板里的小卡片：比面板浅，描边细一档，层级才分得清 */
+  .pixel-card {
+    background: var(--color-parchment-lit);
+    color: var(--color-ink);
+    border: 2px solid var(--color-ink);
+    box-shadow: 2px 2px 0 0 rgb(16 20 28 / 0.28);
+  }
+  .pixel-card[data-active="true"] {
+    background: #fff4c7;
+    border-color: var(--color-ink);
+    box-shadow:
+      inset 0 0 0 2px var(--color-gold),
+      2px 2px 0 0 rgb(16 20 28 / 0.28);
+  }
+
+  /* 凹进去的区域（正文阅读区、折叠块） */
+  .pixel-well {
+    background: var(--color-parchment-lit);
+    border: 2px solid var(--color-ink);
+    box-shadow: inset 2px 2px 0 0 rgb(16 20 28 / 0.18);
+  }
+
+  .pixel-divider {
+    border: 0;
+    border-top: 2px dashed rgb(16 20 28 / 0.25);
+  }
+
+  /* ── 按钮 ───────────────────────────────────────────── */
+
+  .pixel-button {
+    --face: var(--color-parchment-lit);
+    --hi: #ffffff;
+    --lo: var(--color-parchment-dim);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.8rem;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-ink);
+    background: var(--face);
+    border: 3px solid var(--color-ink);
+    box-shadow:
+      inset -3px -3px 0 0 var(--lo),
+      inset 3px 3px 0 0 var(--hi),
+      3px 3px 0 0 rgb(0 0 0 / 0.35);
+    cursor: pointer;
+    user-select: none;
+    text-decoration: none;
+  }
+  .pixel-button:hover:not(:disabled) {
+    filter: brightness(1.07);
+  }
+  /* 按下时高光与暗面对调，再往右下沉 3px，吃掉投影 */
+  .pixel-button:active:not(:disabled) {
+    transform: translate(3px, 3px);
+    box-shadow:
+      inset 3px 3px 0 0 var(--lo),
+      inset -3px -3px 0 0 var(--hi);
+  }
+  .pixel-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .pixel-button--primary {
+    --face: var(--color-gold);
+    --hi: #fff1b3;
+    --lo: #c9a23f;
+  }
+  .pixel-button--danger {
+    --face: var(--color-coral);
+    --hi: #f6a99b;
+    --lo: #b0412f;
+  }
+  .pixel-button--sm {
+    padding: 0.1rem 0.5rem;
+    font-size: 12px;
+    border-width: 2px;
+    box-shadow:
+      inset -2px -2px 0 0 var(--lo),
+      inset 2px 2px 0 0 var(--hi),
+      2px 2px 0 0 rgb(0 0 0 / 0.35);
+  }
+  .pixel-button--sm:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow:
+      inset 2px 2px 0 0 var(--lo),
+      inset -2px -2px 0 0 var(--hi);
+  }
+  /* 幽灵按钮：没有实体，悬停才显形 */
+  .pixel-button--ghost {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+  .pixel-button--ghost:hover:not(:disabled) {
+    filter: none;
+    background: rgb(16 20 28 / 0.1);
+    border-color: var(--color-ink);
+    border-style: dashed;
+  }
+  .pixel-button--ghost:active:not(:disabled) {
+    transform: none;
+    box-shadow: none;
+  }
+  .pixel-button[aria-current="page"],
+  .pixel-button[aria-pressed="true"] {
+    --face: var(--color-gold);
+  }
+  /* 选中态：保持凹下去的样子，和「按下」同一套语言 */
+  .pixel-button[aria-pressed="true"] {
+    --lo: #c9a23f;
+    --hi: #fff1b3;
+    transform: translate(2px, 2px);
+    box-shadow:
+      inset 2px 2px 0 0 var(--lo),
+      inset -2px -2px 0 0 var(--hi);
+  }
+
+  /* 深色背景上的文字链接 */
+  .pixel-link {
+    color: var(--color-gold);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
+  .pixel-link:hover {
+    color: var(--color-parchment-lit);
+  }
+
+  /* ── 输入 ───────────────────────────────────────────── */
+
+  .pixel-field {
+    width: 100%;
+    padding: 0.35rem 0.55rem;
+    font-size: 14px;
+    color: var(--color-ink);
+    background: var(--color-parchment-lit);
+    border: 3px solid var(--color-ink);
+    box-shadow: inset 3px 3px 0 0 rgb(16 20 28 / 0.16);
+  }
+  .pixel-field::placeholder {
+    color: #8c8468;
+  }
+  .pixel-field:focus-visible {
+    outline: none;
+    border-color: var(--color-ink);
+    box-shadow:
+      inset 3px 3px 0 0 rgb(16 20 28 / 0.16),
+      0 0 0 3px var(--color-dawn);
+  }
+  .pixel-field:disabled {
+    background: var(--color-parchment-dim);
+    cursor: not-allowed;
+  }
+  select.pixel-field {
+    width: auto;
+    cursor: pointer;
+  }
+  .pixel-check {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--color-ink);
+    cursor: pointer;
+  }
+
+  /* ── 标签与提示 ──────────────────────────────────────── */
+
+  .pixel-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0 0.35rem;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--tag-fg, var(--color-ink));
+    background: var(--tag-bg, var(--color-gold));
+    border: 2px solid var(--color-ink);
+    white-space: nowrap;
+  }
+  .pixel-tag--green {
+    --tag-bg: var(--color-mint-soft);
+    --tag-fg: var(--color-mint-deep);
+  }
+  .pixel-tag--blue {
+    --tag-bg: var(--color-sky-soft);
+    --tag-fg: var(--color-sky-deep);
+  }
+  .pixel-tag--amber {
+    --tag-bg: var(--color-amber-soft);
+    --tag-fg: var(--color-amber-deep);
+  }
+  .pixel-tag--violet {
+    --tag-bg: var(--color-violet-soft);
+    --tag-fg: var(--color-violet-deep);
+  }
+  .pixel-tag--red {
+    --tag-bg: var(--color-coral-soft);
+    --tag-fg: var(--color-coral-deep);
+  }
+  .pixel-tag--plain {
+    --tag-bg: var(--color-parchment);
+    --tag-fg: var(--color-ink-soft);
+  }
+
+  /* 提示条：左侧一枚方形徽标 + 对话框式的粗描边 */
+  .pixel-notice {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 13px;
+    color: var(--color-ink);
+    background: var(--notice-bg);
+    border: 3px solid var(--color-ink);
+    box-shadow: 3px 3px 0 0 rgb(16 20 28 / 0.3);
+  }
+  .pixel-notice--error {
+    --notice-bg: var(--color-coral-soft);
+    --notice-ico: var(--color-coral);
+  }
+  .pixel-notice--warn {
+    --notice-bg: var(--color-amber-soft);
+    --notice-ico: var(--color-dawn);
+  }
+  .pixel-notice--info {
+    --notice-bg: var(--color-sky-soft);
+    --notice-ico: var(--color-sky);
+  }
+  .pixel-notice__icon {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    margin-top: 0.05rem;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--color-ink);
+    background: var(--notice-ico);
+    border: 2px solid var(--color-ink);
+  }
+
+  /* 三个方块依次跳动的加载指示，steps 逐格而不是平滑插值 */
+  .pixel-spinner {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 12px;
+  }
+  .pixel-spinner > i {
+    width: 5px;
+    height: 5px;
+    background: currentColor;
+    animation: pixel-hop 0.9s steps(2, jump-none) infinite;
+  }
+  .pixel-spinner > i:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+  .pixel-spinner > i:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+  @keyframes pixel-hop {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-6px);
+    }
+  }
+
+  /* 文字描边，用于压在天空上的标题 */
+  .pixel-outline {
+    color: var(--color-parchment-lit);
+    text-shadow:
+      2px 0 0 var(--color-ink),
+      -2px 0 0 var(--color-ink),
+      0 2px 0 var(--color-ink),
+      0 -2px 0 var(--color-ink),
+      2px 2px 0 var(--color-ink),
+      -2px 2px 0 var(--color-ink),
+      2px -2px 0 var(--color-ink),
+      -2px -2px 0 var(--color-ink),
+      4px 4px 0 rgb(0 0 0 / 0.4);
+  }
+
+  /* 日历格：像素瓦片。选中时整块变金并下沉，今天在右上角别一枚小旗 */
+  .day-tile {
+    position: relative;
+    display: flex;
+    min-height: 4rem;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding-top: 0.2rem;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-ink);
+    background: var(--color-parchment-lit);
+    border: 2px solid var(--color-ink);
+    box-shadow: inset -2px -2px 0 0 var(--color-parchment-dim);
+    cursor: pointer;
+  }
+  .day-tile:hover {
+    background: #fff8dd;
+    transform: translateY(-1px);
+  }
+  .day-tile[data-outside="true"] {
+    color: #8c8468;
+    background: var(--color-parchment);
+    border-color: rgb(16 20 28 / 0.45);
+  }
+  .day-tile[aria-pressed="true"] {
+    background: var(--color-gold);
+    box-shadow: inset 2px 2px 0 0 rgb(16 20 28 / 0.25);
+    transform: translateY(1px);
+  }
+  .day-tile[data-today="true"]::after {
+    content: "";
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 0.55rem;
+    height: 0.55rem;
+    background: var(--color-coral);
+    border: 2px solid var(--color-ink);
+  }
+}
+
+@layer components {
+  /* 待机呼吸：2px 的起伏，让静止的画面有「活着」的感觉 */
+  @keyframes idle-bob {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-3px);
+    }
+  }
+  .anim-idle {
+    animation: idle-bob 1.6s steps(2, jump-none) infinite;
+  }
+
+  /* 云的横向漂移 */
+  @keyframes drift {
+    from {
+      transform: translateX(-160px);
+    }
+    to {
+      transform: translateX(100vw);
+    }
+  }
+  .anim-drift {
+    animation: drift linear infinite;
+  }
+
+  /* 星星眨眼 */
+  @keyframes twinkle {
+    0%,
+    60%,
+    100% {
+      opacity: 0.25;
+    }
+    75% {
+      opacity: 1;
+    }
+  }
+  .anim-twinkle {
+    animation: twinkle 3s steps(3, jump-none) infinite;
+  }
+
+  /* 对话气泡里光标的闪烁 */
+  @keyframes blink {
+    0%,
+    49% {
+      opacity: 1;
+    }
+    50%,
+    100% {
+      opacity: 0;
+    }
+  }
+  .anim-blink {
+    animation: blink 1s linear infinite;
+  }
+}
+
+/* 尊重系统的「减弱动态效果」偏好：动画很多，必须提供关闭路径 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

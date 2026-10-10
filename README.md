@@ -80,6 +80,17 @@ npm run dev                     # http://localhost:3000
 
 没有真实模型密钥也可以体验：另开一个终端 `npm run fake-llm`（本地假的 OpenAI 兼容服务，只会机械整理输入），再把 `pi-config/models.json` 指向 `http://127.0.0.1:4010/v1`，`apiKey` 随便写。
 
+### 像素字体
+
+界面采用 2D 像素卡通风格，标题与标签使用 [Fusion Pixel Font](https://github.com/TakWolf/fusion-pixel-font)（SIL OFL-1.1，许可证见 `assets/fonts/`）。完整字体约 645 KB，已按源码里出现的汉字子集化为 `src/app/fonts/pixel-zh.woff2`（约 27 KB，已提交，构建与 Docker 不依赖 Python）。**新增中文文案后若出现缺字方块**，重跑子集化：
+
+```bash
+pip install fonttools brotli
+node scripts/subset-font.mjs     # 可用环境变量 PYFTSUBSET 指定 pyftsubset 路径
+```
+
+注意：`npm run dev` 的 Next.js 可能在项目根目录自动生成 `AGENTS.md`，它不属于本项目，不要提交。
+
 ## Docker Compose 部署
 
 服务器需安装 Docker 及 Compose 插件。

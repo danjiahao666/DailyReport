@@ -8,6 +8,7 @@ import type { CalendarData, JobKind, JobView } from "@/lib/types";
 import { Calendar, type Selection } from "./Calendar";
 import { DailyPanel } from "./DailyPanel";
 import { ReportPanel } from "./ReportPanel";
+import { SiteHeader } from "./pixel";
 import { ErrorNotice } from "./ui";
 
 /** 有任务在后台执行时，每隔多久向服务端同步一次状态 */
@@ -103,38 +104,34 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
   const jobs = data?.jobs ?? [];
 
   return (
-    <main className="mx-auto max-w-6xl space-y-4 p-4 md:p-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold">日报助手</h1>
-          <p className="text-sm text-slate-500">记录日报，一键整理为周报与月报</p>
-        </div>
-        <div className="flex items-center gap-3 text-sm">
-          <label className="flex items-center gap-1.5 text-slate-600">
-            周起始日
-            <select
-              value={weekStart}
-              onChange={(e) => void changeWeekStart(Number(e.target.value))}
-              className="rounded-md border border-slate-300 bg-white px-2 py-1"
-            >
-              {[1, 2, 3, 4, 5, 6, 0].map((d) => (
-                <option key={d} value={d}>
-                  {WEEKDAY_NAMES[d]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <a href="/settings" className="text-slate-600 underline hover:text-slate-900">
-            大模型设置
-          </a>
-          {authEnabled && (
-            <button type="button" onClick={logout} className="text-slate-500 underline hover:text-slate-800">
-              退出登录
-            </button>
-          )}
-        </div>
-      </header>
-
+    <>
+      <SiteHeader
+        title="日报助手"
+        tagline="记录日报，一键整理为周报与月报"
+        actions={
+          <>
+            <label className="flex items-center gap-2 border-2 border-ink bg-dusk/90 py-0.5 pl-2 pr-1 text-[13px] text-parchment">
+              周起始日
+              <select value={weekStart} onChange={(e) => void changeWeekStart(Number(e.target.value))} className="pixel-field !border-2 !py-0.5 !text-[13px]">
+                {[1, 2, 3, 4, 5, 6, 0].map((d) => (
+                  <option key={d} value={d}>
+                    {WEEKDAY_NAMES[d]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <a href="/settings" className="pixel-button">
+              大模型设置
+            </a>
+            {authEnabled && (
+              <button type="button" onClick={logout} className="pixel-button">
+                退出登录
+              </button>
+            )}
+          </>
+        }
+      />
+    <main className="page-shell space-y-5 py-6">
       {settingsError && <ErrorNotice error={settingsError} />}
       {error && <ErrorNotice error={error} onRetry={() => void refresh()} busy={loading} />}
 
@@ -182,5 +179,6 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
         </div>
       </div>
     </main>
+    </>
   );
 }

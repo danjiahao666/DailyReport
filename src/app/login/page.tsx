@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { api, ApiError } from "@/lib/api-client";
 import { Button, ErrorNotice } from "@/components/ui";
+import { SiteHeader } from "@/components/pixel";
 
 export default function LoginPage() {
   const [password, setPassword] = useState("");
@@ -23,28 +24,35 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm items-center p-4">
-      <form onSubmit={submit} className="w-full space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-lg font-bold">日报助手</h1>
-        <div className="space-y-1">
-          <label htmlFor="pw" className="text-sm font-medium">
-            访问密码
-          </label>
-          <input
-            id="pw"
-            type="password"
-            autoFocus
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          />
-        </div>
-        {error && <ErrorNotice error={error} />}
-        <Button type="submit" variant="primary" className="w-full" disabled={busy || password === ""}>
-          {busy ? "登录中…" : "登录"}
-        </Button>
-      </form>
-    </main>
+    <>
+      <SiteHeader title="日报助手" tagline="请先报上暗号，再进小镇" />
+      <main className="page-shell flex justify-center py-10">
+        <form onSubmit={submit} className="pixel-panel w-full max-w-sm">
+          <div className="pixel-titlebar">
+            <h2 className="font-pixel text-lg">登录</h2>
+          </div>
+          <div className="space-y-4 p-4">
+            <div className="space-y-1.5">
+              <label htmlFor="pw" className="font-pixel text-base">
+                访问密码
+              </label>
+              <input
+                id="pw"
+                type="password"
+                autoFocus
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="pixel-field"
+              />
+            </div>
+            {error && <ErrorNotice error={error} />}
+            <Button type="submit" variant="primary" className="w-full" disabled={busy || password === ""}>
+              {busy ? "登录中…" : "登录"}
+            </Button>
+          </div>
+        </form>
+      </main>
+    </>
   );
 }
