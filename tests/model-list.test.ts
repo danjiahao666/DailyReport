@@ -137,6 +137,13 @@ describe("获取模型列表：解析", () => {
     expect(seen[0].headers.authorization).toBeUndefined();
   });
 
+  it("Anthropic：接口地址不带 /v1 时自动补上（网关根路径的 /models 是前端页面）", async () => {
+    const r = await L(body("/anthropic", { api: "anthropic-messages" }));
+    expect(r.status).toBe(200);
+    expect(r.body.models).toEqual([{ id: "claude-x", name: "Claude X", contextWindow: 200000, maxTokens: 64000 }]);
+    expect(seen[0].url).toBe("/anthropic/v1/models?limit=1000");
+  });
+
   it("Gemini：密钥走请求头而不是 URL，去掉 models/ 前缀并过滤掉不能生成文本的模型", async () => {
     const r = await L(body("/google/v1beta", { api: "google-generative-ai" }));
     expect(r.body.models).toEqual([{ id: "gemini-a", name: "Gemini A", contextWindow: 1048576, maxTokens: 65536 }]);

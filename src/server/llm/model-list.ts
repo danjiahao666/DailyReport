@@ -39,7 +39,10 @@ function buildRequest(baseUrl: string, api: string, key: string | undefined): { 
   if (api === "anthropic-messages") {
     if (key) headers["x-api-key"] = key;
     headers["anthropic-version"] = "2023-06-01";
-    return { url: `${base}/models?limit=1000`, headers };
+    // Anthropic SDK 的接口地址不含 /v1（由 SDK 自行拼上 /v1/messages），用户通常填 https://host；
+    // 此时直接请求 /models 会落到网关的前端页面（返回 HTML）。地址末尾已带版本段（如 /v1）时则不再重复追加。
+    const modelsPath = /\/v\d+$/.test(base) ? "/models" : "/v1/models";
+    return { url: `${base}${modelsPath}?limit=1000`, headers };
   }
   if (api === "google-generative-ai") {
     // 用请求头而不是 ?key=，避免密钥出现在 URL 里被各种日志记录
