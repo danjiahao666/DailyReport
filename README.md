@@ -136,6 +136,36 @@ docker compose logs -f app
   docker compose cp app:/data/backup.db ./backup-$(date +%F).db
   ```
 
+### 国内服务器 / 小内存服务器
+
+**构建加速**（在 `.env` 中设置，均可留空）：
+
+- `NPM_REGISTRY`：npm 源，如 `https://registry.npmmirror.com`，加速 `npm ci`。
+- `NODE_IMAGE`：基础镜像地址，Docker Hub 访问不了时可指向镜像站，如 `docker.m.daocloud.io/library/node:24.21.0-bookworm-slim@sha256:…`。保留 `@sha256:` 摘要即可校验内容与固定版本一致。
+
+**预构建部署**：服务器内存只有 1~2GB 时，`next build` 会占满内存并拖垮整台机器。此时在本机构建，服务器只构建“运行阶段”镜像：
+
+```bash
+# 本机（需要 Node >= 22.19）：构建并整理产物，生成 prebuilt/ 和 daily-report-prebuilt.tgz
+npm ci && npm run pack:prebuilt
+
+# 把 daily-report-prebuilt.tgz 上传到服务器的项目目录，然后：
+cd /opt/DailyReport
+rm -rf prebuilt && mkdir prebuilt
+tar -xzf daily-report-prebuilt.tgz -C prebuilt
+
+# .env 中设置  DOCKERFILE=Dockerfile.prebuilt
+docker compose build app && docker compose up -d
+```
+
+说明：
+
+- `pack:prebuilt` 会去掉 `.env`、本机绝对路径和非 Linux 的原生二进制，并展开指向本机路径的符号链接，打包后自检，有残留会直接报错。
+- 产物不含原生模块（SQLite 用 Node 内置的 `node:sqlite`），因此 Windows/macOS 上构建的产物可以在 Linux 容器里运行；运行时仍使用镜像里的 Node 24。
+- 升级时重复以上步骤：本机重新打包、上传、解压、`docker compose build app && docker compose up -d`。
+- 使用 `Dockerfile.prebuilt` 时 compose 可能提示 `NPM_REGISTRY` 等构建参数未使用，可忽略。
+- 不要把 `prebuilt/` 和压缩包提交到 git（已在 `.gitignore` 中）。
+
 ## 设置中心
 
 页面右上角的「设置中心」（`/preferences`）集中管理所有可在页面里调整的选项，改动先落在草稿上，底部点「保存修改」后整体校验、立即生效（任何一项不合法则整次都不保存）：

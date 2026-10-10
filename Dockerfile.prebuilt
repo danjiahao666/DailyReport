@@ -1,0 +1,33 @@
+# 预构建镜像：只有“运行阶段”，不在服务器上编译。
+# 适用于服务器内存很小（如 1~2GB，`next build` 会把机器拖垮）的场景：
+#   1) 本机执行  npm run pack:prebuilt        （构建并整理产物，生成 prebuilt/ 与 daily-report-prebuilt.tgz）
+#   2) 把压缩包上传到服务器项目目录并解压到 prebuilt/
+#   3) .env 中设置  DOCKERFILE=Dockerfile.prebuilt  后  docker compose build app && docker compose up -d
+# 详见 README“预构建部署”。运行时环境、权限、健康检查与 Dockerfile 的 runner 阶段保持一致。
+#
+# 注意：本文件刻意不写 `# syntax=` 指令，避免构建时额外访问 Docker Hub 拉取语法前端镜像。
+ARG NODE_IMAGE=node:24.21.0-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+
+FROM ${NODE_IMAGE} AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0 \
+    DATA_DIR=/data \
+    PI_CODING_AGENT_DIR=/pi-config \
+    NODE_OPTIONS=--disable-warning=ExperimentalWarning
+
+RUN mkdir -p /data /pi-config && chown node:node /data /pi-config
+
+# prebuilt/ 由 scripts/pack-prebuilt.mjs 生成：已去除 .env、本机路径与非 Linux 二进制
+COPY --chown=node:node prebuilt/ ./
+
+USER node
+EXPOSE 3000
+VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "server.js"]

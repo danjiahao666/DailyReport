@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest --run",
     "smoke": "node scripts/smoke.mjs",
+    "pack:prebuilt": "next build && node scripts/pack-prebuilt.mjs",
     "fake-llm": "node scripts/fake-llm.mjs"
   },
   "dependencies": {

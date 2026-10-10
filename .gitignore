@@ -1,6 +1,8 @@
 node_modules
 .next
 out
+prebuilt
+daily-report-prebuilt.tgz
 data
 .env
 .env.local

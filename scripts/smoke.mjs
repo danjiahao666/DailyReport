@@ -105,7 +105,8 @@ async function waitFor(url, label) {
 }
 
 async function main() {
-  const standalone = path.join(root, ".next", "standalone", "server.js");
+  // SMOKE_SERVER：指定其他位置的 server.js（如预构建产物 prebuilt/server.js），用于验证它不依赖构建时的路径
+  const standalone = process.env.SMOKE_SERVER ? path.resolve(process.env.SMOKE_SERVER) : path.join(root, ".next", "standalone", "server.js");
   if (!existsSync(standalone)) throw new Error("未找到构建产物，请先执行 npm run build");
 
   // pi 风格配置：models.json（自定义端点，密钥通过 $ENV 引用）+ settings.json

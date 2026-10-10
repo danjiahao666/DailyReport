@@ -6,6 +6,8 @@ services:
   app:
     build:
       context: .
+      # 默认 Dockerfile（在服务器上编译）；服务器内存小时改用 Dockerfile.prebuilt，见 README“预构建部署”
+      dockerfile: ${DOCKERFILE:-Dockerfile}
       args:
         # 构建加速（均可在 .env 中设置，留空即默认）：npm 源、基础镜像地址
         NPM_REGISTRY: ${NPM_REGISTRY:-}

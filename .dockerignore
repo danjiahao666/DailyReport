@@ -11,6 +11,7 @@ pi-config/models.json
 pi-config/settings.json
 tests
 *.tsbuildinfo
+daily-report-prebuilt.tgz
 npm-debug.log*
 Dockerfile
 docker-compose.yml
