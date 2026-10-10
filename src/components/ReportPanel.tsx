@@ -5,7 +5,7 @@ import { api, ApiError } from "@/lib/api-client";
 import type { JobView, MonthlyPlan, MonthlySource, Report, ReportVersion, VersionOrigin } from "@/lib/types";
 import { Markdown } from "./Markdown";
 import { Icon } from "./pixel";
-import { Button, ErrorNotice, JobFailed, Modal, Notice, Spinner } from "./ui";
+import { Button, CopyButton, ErrorNotice, JobFailed, Modal, Notice, Spinner } from "./ui";
 
 interface Props {
   kind: "weekly" | "monthly";
@@ -289,16 +289,21 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
                 <Markdown text={shown.content} />
               </div>
             )}
-            {!editing && !isHistorical && (
-              <Button
-                onClick={() => {
-                  setDraft(shown.content);
-                  setEditing(true);
-                  setEditError(null);
-                }}
-              >
-                编辑
-              </Button>
+            {!editing && (
+              <div className="flex flex-wrap gap-2">
+                <CopyButton text={shown.content} label={`复制${label}`} />
+                {!isHistorical && (
+                  <Button
+                    onClick={() => {
+                      setDraft(shown.content);
+                      setEditing(true);
+                      setEditError(null);
+                    }}
+                  >
+                    编辑
+                  </Button>
+                )}
+              </div>
             )}
           </div>
         )}

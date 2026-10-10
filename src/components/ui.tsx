@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api-client";
+import { copyText } from "@/lib/clipboard";
 import { jobError } from "@/lib/job-client";
 import type { JobView } from "@/lib/types";
 
@@ -81,6 +83,47 @@ export function Button({
   const variantClass = variant === "default" ? "" : `pixel-button--${variant}`;
   const sizeClass = size === "sm" ? "pixel-button--sm" : "";
   return <button type="button" {...props} className={`pixel-button ${variantClass} ${sizeClass} ${className}`} />;
+}
+
+/** 一键复制文本到剪贴板，按钮上短暂显示“已复制”/“复制失败” */
+export function CopyButton({
+  text,
+  label = "复制",
+  variant = "default",
+  size = "md",
+  disabled,
+}: {
+  text: string;
+  label?: string;
+  variant?: "default" | "primary" | "danger" | "ghost";
+  size?: "md" | "sm";
+  disabled?: boolean;
+}) {
+  const [state, setState] = useState<"idle" | "done" | "failed">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+  // 内容切换（换日期、换版本）后复位提示，避免误以为新内容已复制
+  useEffect(() => {
+    setState("idle");
+  }, [text]);
+
+  async function onCopy() {
+    let next: "done" | "failed" = "done";
+    try {
+      await copyText(text);
+    } catch {
+      next = "failed";
+    }
+    setState(next);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setState("idle"), 2000);
+  }
+
+  return (
+    <Button variant={variant} size={size} onClick={onCopy} disabled={disabled || text === ""} aria-live="polite">
+      {state === "done" ? "已复制" : state === "failed" ? "复制失败" : label}
+    </Button>
+  );
 }
 
 export function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose?: () => void }) {

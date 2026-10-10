@@ -5,7 +5,7 @@ import { api, ApiError } from "@/lib/api-client";
 import { weekdayName } from "@/lib/dates";
 import type { DailyEntry, DailyVersion, JobView } from "@/lib/types";
 import { Icon } from "./pixel";
-import { Button, ErrorNotice, JobFailed, Modal, Notice, Spinner } from "./ui";
+import { Button, CopyButton, ErrorNotice, JobFailed, Modal, Notice, Spinner } from "./ui";
 
 interface Props {
   date: string;
@@ -185,6 +185,7 @@ export function DailyPanel({ date, job, onJob, onChanged, defaultOptimize = fals
                 {which === "original" ? "回退到原文" : "采用此版本"}
               </Button>
             )}
+            {!isEditing && <CopyButton size="sm" text={content} />}
             {!isEditing && (
               <Button size="sm" variant="ghost" onClick={() => startEdit(which)}>
                 编辑
