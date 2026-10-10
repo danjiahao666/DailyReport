@@ -120,6 +120,9 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
                 ))}
               </select>
             </label>
+            <a href="/preferences" className="pixel-button">
+              设置中心
+            </a>
             <a href="/settings" className="pixel-button">
               大模型设置
             </a>
@@ -156,6 +159,7 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
               job={findJob(jobs, "optimize", selection.date)}
               onJob={(job) => setJob("optimize", selection.date, job)}
               onChanged={() => void refresh()}
+              defaultOptimize={data?.optimizeOnSubmit ?? false}
             />
           )}
           {selection.type === "weekly" && weekly && (

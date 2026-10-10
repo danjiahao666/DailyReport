@@ -24,22 +24,11 @@ import { AppError } from "./errors";
 import { listDailies } from "./daily";
 import { startJob } from "./jobs";
 import { generateText } from "./llm/client";
-import {
-  MONTHLY_SYSTEM,
-  monthlyUser,
-  WEEKLY_SYSTEM,
-  weeklyUser,
-  type MonthlyBlock,
-  type WeeklyDay,
-} from "./llm/prompts";
+import { monthlyUser, weeklyUser, type MonthlyBlock, type WeeklyDay } from "./llm/prompts";
+import { getLlmTimeoutMs, getMaxInputChars, getMaxTokens, getSystemPrompt, getTemplate } from "./prefs";
 import { getWeekStart } from "./settings";
 
 export const MAX_REPORT_CHARS = 50_000;
-
-function maxInputChars(): number {
-  const n = Number(process.env.LLM_MAX_INPUT_CHARS);
-  return Number.isFinite(n) && n > 0 ? n : 60_000;
-}
 
 function sha(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -310,7 +299,7 @@ function assertNotOverwritingEdits(existing: Report | null, confirm: unknown): v
 }
 
 function assertInputSize(chars: number): void {
-  const max = maxInputChars();
+  const max = getMaxInputChars();
   if (chars > max) {
     throw new AppError(
       413,
@@ -339,9 +328,10 @@ export function startWeekly(dateInput: unknown, confirm?: unknown): JobView {
   return startJob("weekly", range.start, async () => {
     const { text, model } = await generateText({
       task: "weekly",
-      system: WEEKLY_SYSTEM,
-      user: weeklyUser(range, input.days, input.missing),
-      maxTokens: 4096,
+      system: getSystemPrompt("weekly"),
+      user: weeklyUser(range, input.days, input.missing, getTemplate("weekly")),
+      maxTokens: getMaxTokens("weekly"),
+      timeoutMs: getLlmTimeoutMs(),
     });
     const meta: ReportMeta = { inputHash: input.hash, dailyDates: input.days.map((d) => d.date) };
     transaction((db) => {
@@ -371,9 +361,10 @@ export function startMonthly(monthInput: unknown, sourceInput: unknown, confirm?
   return startJob("monthly", month, async () => {
     const { text, model } = await generateText({
       task: "monthly",
-      system: MONTHLY_SYSTEM,
-      user: monthlyUser(month, input.blocks),
-      maxTokens: 6144,
+      system: getSystemPrompt("monthly"),
+      user: monthlyUser(month, input.blocks, getTemplate("monthly")),
+      maxTokens: getMaxTokens("monthly"),
+      timeoutMs: getLlmTimeoutMs(),
     });
     const meta: ReportMeta = {
       source,

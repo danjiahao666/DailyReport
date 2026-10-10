@@ -5,7 +5,8 @@ import { AppError } from "./errors";
 import { clearJob, startJob } from "./jobs";
 import { generateText } from "./llm/client";
 import { optimizationWarnings } from "./llm/guard";
-import { OPTIMIZE_SYSTEM, optimizeUser } from "./llm/prompts";
+import { optimizeUser } from "./llm/prompts";
+import { getCheckNewNumbers, getLlmTimeoutMs, getMaxTokens, getSystemPrompt, getTemplate } from "./prefs";
 
 export const MAX_DAILY_CHARS = 20_000;
 
@@ -34,7 +35,7 @@ function toEntry(row: DailyRow): DailyEntry {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     effective: useOptimized ? (row.optimized as string) : row.original,
-    warnings: row.optimized !== null && row.optimized_stale !== 1 ? optimizationWarnings(row.original, row.optimized) : [],
+    warnings: row.optimized !== null && row.optimized_stale !== 1 && getCheckNewNumbers() ? optimizationWarnings(row.original, row.optimized) : [],
   };
 }
 
@@ -167,9 +168,10 @@ export function startOptimizeDaily(date: string): JobView {
   return startJob("optimize", date, async () => {
     const { text, model } = await generateText({
       task: "optimize",
-      system: OPTIMIZE_SYSTEM,
-      user: optimizeUser(before.original),
-      maxTokens: 4096,
+      system: getSystemPrompt("optimize"),
+      user: optimizeUser(before.original, getTemplate("optimize")),
+      maxTokens: getMaxTokens("optimize"),
+      timeoutMs: getLlmTimeoutMs(),
     });
     transaction((db) => {
       const row = db.prepare("SELECT * FROM daily_entries WHERE date = ?").get(date) as DailyRow | undefined;

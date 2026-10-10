@@ -79,6 +79,8 @@ export interface CalendarDaily {
 export interface CalendarData {
   month: string;
   weekStart: number;
+  /** 设置中心里的「提交日报时默认勾选大模型优化」 */
+  optimizeOnSubmit: boolean;
   gridStart: string;
   gridEnd: string;
   dailies: CalendarDaily[];

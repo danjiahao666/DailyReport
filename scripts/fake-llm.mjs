@@ -34,7 +34,9 @@ function compose(system, user) {
   const blocks = [...user.matchAll(/<(日报|周报)\s+[^>]*>\n([\s\S]*?)\n<\/\1>/g)];
   const lines = blocks.flatMap((b) => bullets(b[2]));
   const done = lines.length ? lines.join("\n") : "- （无）";
-  if (system.includes("## 本周完成事项")) {
+  // 小节标题现在由「输出模板」（在用户消息里）决定，所以系统提示词与用户消息一起判断
+  if (`${system}
+${user}`.includes("## 本周完成事项")) {
     return `## 本周完成事项\n${done}\n\n## 重点成果\n本周日报中未明确记录重点成果。\n\n## 遇到的问题\n本周日报中未记录明显问题。\n\n## 下周计划建议\n- 建议继续跟进本周未完成事项。`;
   }
   return `## 月度工作概览\n本月共整理 ${blocks.length} 份材料。\n${done}\n\n## 主要成果\n本月材料中未明确记录主要成果。\n\n## 问题与反思\n本月材料中未记录明显问题。\n\n## 下月计划建议\n- 建议继续跟进本月未完成事项。`;

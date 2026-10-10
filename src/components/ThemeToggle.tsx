@@ -1,6 +1,6 @@
 "use client";
 
-import { THEME_KEY } from "@/lib/theme";
+import { applyTheme, readTheme } from "@/lib/theme";
 import { PixelArt } from "./PixelArt";
 import { MOON_ICON, SUN_ICON } from "./pixel-art-data";
 
@@ -13,14 +13,7 @@ import { MOON_ICON, SUN_ICON } from "./pixel-art-data";
  */
 export function ThemeToggle() {
   function toggle() {
-    const root = document.documentElement;
-    const next = root.dataset.theme === "day" ? "night" : "day";
-    root.dataset.theme = next;
-    try {
-      localStorage.setItem(THEME_KEY, next);
-    } catch {
-      // 隐私模式等场景写不进去：本次会话仍然生效，只是刷新后回到默认
-    }
+    applyTheme(readTheme() === "day" ? "night" : "day");
   }
 
   return (

@@ -256,9 +256,14 @@ export function LlmSettings() {
         title="大模型设置"
         tagline="配置保存在 pi 约定的 models.json / auth.json / settings.json，修改后立即生效，无需重启"
         actions={
-          <a href="/" className="pixel-button">
-            ← 返回日报
-          </a>
+          <>
+            <a href="/" className="pixel-button">
+              ← 返回日报
+            </a>
+            <a href="/preferences" className="pixel-button">
+              设置中心
+            </a>
+          </>
         }
       />
     <main className="page-shell max-w-4xl space-y-5 py-6">

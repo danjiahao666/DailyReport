@@ -5,6 +5,7 @@ import { AppError } from "@/server/errors";
 import { route } from "@/server/http";
 import { listJobs } from "@/server/jobs";
 import { listReportSummaries } from "@/server/reports";
+import { getOptimizeOnSubmit } from "@/server/prefs";
 import { getWeekStart } from "@/server/settings";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,7 @@ export const GET = route((req): CalendarData => {
   return {
     month,
     weekStart,
+    optimizeOnSubmit: getOptimizeOnSubmit(),
     gridStart: grid.start,
     gridEnd: grid.end,
     dailies: calendarDailies(grid.start, grid.end),

@@ -13,15 +13,17 @@ interface Props {
   job: JobView | null;
   onJob: (job: JobView | null) => void;
   onChanged: () => void;
+  /** 设置中心里「提交日报时默认勾选大模型优化」 */
+  defaultOptimize?: boolean;
 }
 
-export function DailyPanel({ date, job, onJob, onChanged }: Props) {
+export function DailyPanel({ date, job, onJob, onChanged, defaultOptimize = false }: Props) {
   const [entry, setEntry] = useState<DailyEntry | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
 
   const [text, setText] = useState("");
-  const [wantOptimize, setWantOptimize] = useState(false);
+  const [wantOptimize, setWantOptimize] = useState(defaultOptimize);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<ApiError | null>(null);
   const [conflict, setConflict] = useState<DailyEntry | null>(null);
@@ -65,6 +67,11 @@ export function DailyPanel({ date, job, onJob, onChanged }: Props) {
     setConflict(null);
     void load();
   }, [date, load]);
+
+  // 日历数据晚于面板到达，或用户在设置中心改了默认值：同步一次勾选状态
+  useEffect(() => {
+    setWantOptimize(defaultOptimize);
+  }, [defaultOptimize]);
 
   // 后台优化结束（成功或失败）后重新加载日报，展示优化稿
   useEffect(() => {

@@ -1,19 +1,32 @@
 import { createHmac, timingSafeEqual, createHash } from "node:crypto";
+import { KEY_HASH, KEY_SECRET, readAuthSetting, verifyPasswordHash } from "./password";
 
 /**
- * 简单的单用户访问保护：设置 APP_PASSWORD 后启用。
+ * 简单的单用户访问保护。密码有两个来源，环境变量优先：
+ * 1. 环境变量 APP_PASSWORD（部署方配置，网页不可改）；
+ * 2. 设置中心里设置的密码（只存加盐摘要，见 password.ts）。
  * 登录成功后下发 HMAC 签名的 httpOnly Cookie（含过期时间），无服务端会话存储。
  */
 
 export const SESSION_COOKIE = "dr_session";
 const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
 
+export type AuthSource = "env" | "page";
+
+/** 访问保护由谁控制；null 表示未启用。有环境变量时不读库，保持原有行为与开销 */
+export function authSource(): AuthSource | null {
+  if (process.env.APP_PASSWORD) return "env";
+  return readAuthSetting(KEY_HASH) ? "page" : null;
+}
+
 export function authEnabled(): boolean {
-  return Boolean(process.env.APP_PASSWORD);
+  return authSource() !== null;
 }
 
 function secret(): string {
-  return process.env.SESSION_SECRET || `dr-v1:${process.env.APP_PASSWORD ?? ""}`;
+  if (process.env.APP_PASSWORD) return process.env.SESSION_SECRET || `dr-v1:${process.env.APP_PASSWORD}`;
+  // 页面设置的密码：签名密钥随密码一起生成、一起更换，所以改密码会让旧登录态全部失效
+  return `${process.env.SESSION_SECRET ?? ""}|dr-v2:${readAuthSetting(KEY_SECRET) ?? ""}`;
 }
 
 function sign(payload: string): string {
@@ -38,7 +51,10 @@ export function verifySessionToken(token: string | undefined, now = Date.now()):
 
 export function passwordMatches(input: string): boolean {
   const expected = process.env.APP_PASSWORD;
-  if (!expected) return false;
+  if (!expected) {
+    const stored = readAuthSetting(KEY_HASH);
+    return stored ? verifyPasswordHash(input, stored) : false;
+  }
   // 先做摘要再做常量时间比较，避免长度泄露
   const a = createHash("sha256").update(input).digest();
   const b = createHash("sha256").update(expected).digest();

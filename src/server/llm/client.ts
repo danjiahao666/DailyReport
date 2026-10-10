@@ -37,7 +37,8 @@ export function resetLlmRuntime(): void {
   runtime = undefined;
 }
 
-function timeoutMs(): number {
+/** 没有页面设置时的超时：环境变量 LLM_TIMEOUT_MS，缺省 120 秒 */
+export function timeoutMs(): number {
   const n = Number(process.env.LLM_TIMEOUT_MS);
   if (!Number.isFinite(n) || n <= 0) return 120_000;
   return Math.min(Math.max(n, 1_000), 600_000);
