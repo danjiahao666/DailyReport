@@ -31,13 +31,30 @@ function templateBlock(template: string): string {
   return t === "" ? "" : `\n\n<输出模板>\n${t}\n</输出模板>`;
 }
 
-export function optimizeUser(original: string, template = ""): string {
+/**
+ * 把模板里写死的日期（如 2026-09-30、2026/9/30、2026年9月30日）替换为日报所属日期。
+ * 模板通常是从某一天的日报复制来的，不替换的话模型会照抄旧日期；这里在服务端确定性处理，不依赖模型。
+ */
+export function applyTemplateDate(template: string, date: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return template;
+  const [, y, mo, d] = m;
+  const fit = (value: string, src: string) => (src.length >= 2 ? value : String(Number(value)));
+  return template.replace(
+    /(?<!\d)(\d{4})([-/.年])(\d{1,2})([-/.月])(\d{1,2})(日?)(?!\d)/g,
+    (_all, _y, s1: string, mm: string, s2: string, dd: string, tail: string) =>
+      `${y}${s1}${fit(mo, mm)}${s2}${fit(d, dd)}${tail}`,
+  );
+}
+
+export function optimizeUser(original: string, template = "", date = ""): string {
   const tip = template.trim() === "" ? "" : "，并参照末尾的输出模板组织结构";
-  return `请优化下面这条日报${tip}，只输出优化后的日报正文。
+  const dateLine = date === "" ? "" : `\n日报日期：${date}（输出中涉及日期时必须以此为准，模板里的示例日期不是真实日期）`;
+  return `请优化下面这条日报${tip}，只输出优化后的日报正文。${dateLine}
 
 <日报原文>
 ${original}
-</日报原文>${templateBlock(template)}`;
+</日报原文>${templateBlock(date === "" ? template : applyTemplateDate(template, date))}`;
 }
 
 export const WEEKLY_SYSTEM = `你是一名严谨的中文职场写作助手，负责把一周内的日报汇总为周报。

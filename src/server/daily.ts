@@ -169,7 +169,7 @@ export function startOptimizeDaily(date: string): JobView {
     const { text, model } = await generateText({
       task: "optimize",
       system: getSystemPrompt("optimize"),
-      user: optimizeUser(before.original, getTemplate("optimize")),
+      user: optimizeUser(before.original, getTemplate("optimize"), date),
       maxTokens: getMaxTokens("optimize"),
       timeoutMs: getLlmTimeoutMs(),
     });
