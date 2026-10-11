@@ -21,6 +21,23 @@ export interface DailyEntry {
   effective: string;
   /** 优化稿的事实核对提示（如出现了原文没有的数字），由原文与优化稿即时计算 */
   warnings: string[];
+  /** 优化稿历史版本，新的在前（第一条即当前优化稿）。仅单日查询返回，日期范围查询不带 */
+  optimizedVersions?: DailyOptimizedVersion[];
+}
+
+export interface DailyOptimizedVersion {
+  id: number;
+  versionNo: number;
+  content: string;
+  origin: VersionOrigin;
+  model: string | null;
+  /** 由哪个历史版本恢复而来（版本号） */
+  restoredFrom: number | null;
+  /** 是否为当前优化稿 */
+  isCurrent: boolean;
+  /** 该版本对应的不是现在的原文（原文之后被修改过，或无法确认） */
+  stale: boolean;
+  createdAt: string;
 }
 
 export interface ReportMeta {

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api-client";
-import type { JobView, MonthlyPlan, MonthlySource, Report, ReportVersion, VersionOrigin } from "@/lib/types";
+import { fmtTime, ORIGIN_LABEL } from "@/lib/format";
+import type { JobView, MonthlyPlan, MonthlySource, Report, ReportVersion } from "@/lib/types";
 import { CopyMenu } from "./CopyMenu";
 import { Markdown } from "./Markdown";
 import { Icon } from "./pixel";
@@ -16,18 +17,6 @@ interface Props {
   job: JobView | null;
   onJob: (job: JobView | null) => void;
   onChanged: () => void;
-}
-
-const ORIGIN_LABEL: Record<VersionOrigin, string> = {
-  generated: "模型生成",
-  edited: "手动编辑",
-  restored: "历史恢复",
-};
-
-function fmtTime(iso: string): string {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {

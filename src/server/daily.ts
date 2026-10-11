@@ -1,6 +1,7 @@
-import type { CalendarDaily, DailyEntry, DailyVersion, JobView } from "@/lib/types";
+import type { DatabaseSync } from "node:sqlite";
+import type { CalendarDaily, DailyEntry, DailyOptimizedVersion, DailyVersion, JobView, VersionOrigin } from "@/lib/types";
 import { isValidDate } from "@/lib/dates";
-import { getDb, nowIso, transaction } from "./db";
+import { getDb, hashText, nowIso, transaction } from "./db";
 import { AppError } from "./errors";
 import { clearJob, startJob } from "./jobs";
 import { generateText } from "./llm/client";
@@ -9,6 +10,8 @@ import { optimizeUser } from "./llm/prompts";
 import { getCheckNewNumbers, getLlmTimeoutMs, getMaxTokens, getSystemPrompt, getTemplate } from "./prefs";
 
 export const MAX_DAILY_CHARS = 20_000;
+/** 每个日期最多保留的优化稿历史版本数，超出时删除最旧的（当前版本始终保留） */
+export const MAX_OPTIMIZED_VERSIONS = 50;
 
 interface DailyRow {
   date: string;
@@ -56,7 +59,58 @@ export function validateContent(content: unknown, field = "日报内容"): strin
 
 export function getDaily(date: string): DailyEntry | null {
   const row = getDb().prepare("SELECT * FROM daily_entries WHERE date = ?").get(date) as DailyRow | undefined;
-  return row ? toEntry(row) : null;
+  if (!row) return null;
+  return { ...toEntry(row), optimizedVersions: listOptimizedVersions(date, row.original) };
+}
+
+interface VersionRow {
+  id: number;
+  version_no: number;
+  content: string;
+  origin: VersionOrigin;
+  model: string | null;
+  source_hash: string | null;
+  restored_from: number | null;
+  created_at: string;
+}
+
+function listOptimizedVersions(date: string, original: string): DailyOptimizedVersion[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM daily_optimized_versions WHERE date = ? ORDER BY version_no DESC")
+    .all(date) as unknown as VersionRow[];
+  const hash = hashText(original);
+  return rows.map((r, i) => ({
+    id: r.id,
+    versionNo: r.version_no,
+    content: r.content,
+    origin: r.origin,
+    model: r.model,
+    restoredFrom: r.restored_from,
+    isCurrent: i === 0,
+    stale: r.source_hash !== hash,
+    createdAt: r.created_at,
+  }));
+}
+
+/** 追加一个优化稿历史版本并裁剪超出上限的旧版本；必须在事务内调用 */
+function appendOptimizedVersion(
+  db: DatabaseSync,
+  date: string,
+  v: { content: string; origin: VersionOrigin; model: string | null; sourceHash: string | null; restoredFrom?: number },
+  now: string,
+): void {
+  const last = db.prepare("SELECT MAX(version_no) AS n FROM daily_optimized_versions WHERE date = ?").get(date) as { n: number | null };
+  const versionNo = (last.n ?? 0) + 1;
+  db.prepare(
+    "INSERT INTO daily_optimized_versions (date, version_no, content, origin, model, source_hash, restored_from, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(date, versionNo, v.content, v.origin, v.model, v.sourceHash, v.restoredFrom ?? null, now);
+  db.prepare("DELETE FROM daily_optimized_versions WHERE date = ? AND version_no <= ?").run(date, versionNo - MAX_OPTIMIZED_VERSIONS);
+}
+
+function latestOptimizedVersion(db: DatabaseSync, date: string): VersionRow | undefined {
+  return db.prepare("SELECT * FROM daily_optimized_versions WHERE date = ? ORDER BY version_no DESC LIMIT 1").get(date) as unknown as
+    | VersionRow
+    | undefined;
 }
 
 export function requireDaily(date: string): DailyEntry {
@@ -86,6 +140,7 @@ export type SubmitMode = "overwrite" | "append";
 /**
  * 提交日报。一天只有一条：已存在且未指定 mode 时返回 409（附带已有内容），由前端让用户选择覆盖或追加。
  * 原文一旦变化，已有优化稿即标记过期，并回退到采用原文，保证周报/月报不会使用与原文不符的旧优化稿。
+ * 追加和编辑原文不会清除优化稿历史；覆盖是“整条重写”，优化稿和它的历史一并清除。
  */
 export function submitDaily(date: string, contentInput: unknown, mode?: unknown): DailyEntry {
   const content = validateContent(contentInput);
@@ -100,6 +155,7 @@ export function submitDaily(date: string, contentInput: unknown, mode?: unknown)
     } else if (mode === undefined) {
       throw new AppError(409, "DAILY_EXISTS", "该日期已有日报，请选择覆盖或追加", { existing: toEntry(existing) });
     } else if (mode === "overwrite") {
+      db.prepare("DELETE FROM daily_optimized_versions WHERE date = ?").run(date);
       db.prepare(
         "UPDATE daily_entries SET original = ?, optimized = NULL, active = 'original', optimized_stale = 0, optimized_model = NULL, optimized_at = NULL, updated_at = ? WHERE date = ?",
       ).run(content, now, date);
@@ -133,7 +189,15 @@ export function editDaily(date: string, target: unknown, contentInput: unknown):
       ).run(content, now, date);
     } else {
       if (row.optimized === null) throw new AppError(409, "NO_OPTIMIZED", "该日报还没有优化稿");
+      if (content === row.optimized) return requireDaily(date);
       db.prepare("UPDATE daily_entries SET optimized = ?, updated_at = ? WHERE date = ?").run(content, now, date);
+      // 手动编辑也作为一个版本记录，下一次重新优化不会把它冲掉；对应的原文沿用编辑前那一版
+      appendOptimizedVersion(
+        db,
+        date,
+        { content, origin: "edited", model: row.optimized_model, sourceHash: latestOptimizedVersion(db, date)?.source_hash ?? null },
+        now,
+      );
     }
     return requireDaily(date);
   });
@@ -183,6 +247,39 @@ export function startOptimizeDaily(date: string): JobView {
       db.prepare(
         "UPDATE daily_entries SET optimized = ?, optimized_stale = 0, optimized_model = ?, optimized_at = ?, updated_at = ? WHERE date = ?",
       ).run(text, model, now, now, date);
+      appendOptimizedVersion(db, date, { content: text, origin: "generated", model, sourceHash: hashText(row.original) }, now);
     });
+  });
+}
+
+/**
+ * 把某个历史优化稿恢复为当前优化稿。恢复会新增一个版本，现有版本不会被覆盖，也不改变当前采用的是原文还是优化稿。
+ * 如果该版本对应的不是现在的原文，恢复后同样标记为过期。
+ */
+export function restoreOptimizedVersion(date: string, versionId: unknown): DailyEntry {
+  if (typeof versionId !== "number" || !Number.isInteger(versionId)) {
+    throw new AppError(400, "INVALID_VERSION", "versionId 必须是整数");
+  }
+  return transaction((db) => {
+    const row = db.prepare("SELECT * FROM daily_entries WHERE date = ?").get(date) as DailyRow | undefined;
+    if (!row) throw new AppError(404, "NOT_FOUND", "该日期没有日报");
+    // 按日期限定查询，防止用别的日期的版本 ID 越权读取
+    const target = db.prepare("SELECT * FROM daily_optimized_versions WHERE id = ? AND date = ?").get(versionId, date) as unknown as
+      | VersionRow
+      | undefined;
+    if (!target) throw new AppError(404, "NOT_FOUND", "历史版本不存在");
+    if (latestOptimizedVersion(db, date)?.id === target.id) return requireDaily(date);
+    const now = nowIso();
+    const stale = target.source_hash !== null && target.source_hash === hashText(row.original) ? 0 : 1;
+    db.prepare(
+      "UPDATE daily_entries SET optimized = ?, optimized_stale = ?, optimized_model = ?, optimized_at = ?, updated_at = ? WHERE date = ?",
+    ).run(target.content, stale, target.model, now, now, date);
+    appendOptimizedVersion(
+      db,
+      date,
+      { content: target.content, origin: "restored", model: target.model, sourceHash: target.source_hash, restoredFrom: target.version_no },
+      now,
+    );
+    return requireDaily(date);
   });
 }

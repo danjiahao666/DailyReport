@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -19,6 +19,21 @@ CREATE TABLE IF NOT EXISTS daily_entries (
   optimized_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+-- 日报优化稿的历史版本：每次优化、手动编辑、恢复都追加一条，版本号最大的一条就是当前优化稿
+CREATE TABLE IF NOT EXISTS daily_optimized_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL REFERENCES daily_entries(date) ON DELETE CASCADE,
+  version_no INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  origin TEXT NOT NULL CHECK (origin IN ('generated','edited','restored')),
+  model TEXT,
+  -- 生成该版本时原文的哈希；NULL 表示无法确认它对应哪一版原文，一律按“已过期”处理
+  source_hash TEXT,
+  restored_from INTEGER,
+  created_at TEXT NOT NULL,
+  UNIQUE (date, version_no)
 );
 
 CREATE TABLE IF NOT EXISTS reports (
@@ -88,6 +103,7 @@ export function getDb(): DatabaseSync {
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec(SCHEMA);
+  backfillOptimizedVersions(db);
   // 上一个进程中断的任务不会再有人更新状态，标记为失败，避免页面永远显示“进行中”
   db.prepare(
     "UPDATE llm_jobs SET status = 'failed', error_code = 'INTERRUPTED', error_message = ?, retryable = 1, finished_at = ? WHERE status = 'running' AND boot_id <> ?",
@@ -95,6 +111,45 @@ export function getDb(): DatabaseSync {
   holder.db = db;
   holder.file = file;
   return db;
+}
+
+export function hashText(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+/**
+ * 升级前已有的优化稿没有历史记录：为每个有优化稿且无历史的日期补一条 v1。
+ * 幂等，每次打开数据库都会执行，已有历史的日期不受影响。
+ */
+function backfillOptimizedVersions(db: DatabaseSync): void {
+  const rows = db
+    .prepare(
+      `SELECT date, original, optimized, optimized_stale, optimized_model, optimized_at, updated_at FROM daily_entries e
+       WHERE optimized IS NOT NULL AND NOT EXISTS (SELECT 1 FROM daily_optimized_versions v WHERE v.date = e.date)`,
+    )
+    .all() as unknown as {
+    date: string;
+    original: string;
+    optimized: string;
+    optimized_stale: number;
+    optimized_model: string | null;
+    optimized_at: string | null;
+    updated_at: string;
+  }[];
+  if (rows.length === 0) return;
+  const insert = db.prepare(
+    "INSERT INTO daily_optimized_versions (date, version_no, content, origin, model, source_hash, created_at) VALUES (?, 1, ?, 'generated', ?, ?, ?)",
+  );
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const r of rows) {
+      insert.run(r.date, r.optimized, r.optimized_model, r.optimized_stale === 1 ? null : hashText(r.original), r.optimized_at ?? r.updated_at);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function closeDb(): void {

@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api-client";
 import { weekdayName } from "@/lib/dates";
-import type { DailyEntry, DailyVersion, JobView } from "@/lib/types";
+import { fmtTime, ORIGIN_LABEL } from "@/lib/format";
+import type { DailyEntry, DailyOptimizedVersion, DailyVersion, JobView } from "@/lib/types";
 import { CopyMenu } from "./CopyMenu";
 import { Icon } from "./pixel";
 import { Button, ErrorNotice, JobFailed, Modal, Notice, Spinner } from "./ui";
@@ -37,6 +38,8 @@ export function DailyPanel({ date, job, onJob, onChanged, defaultOptimize = fals
   const [editError, setEditError] = useState<ApiError | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<ApiError | null>(null);
+  /** 当前展开查看内容的历史优化稿 */
+  const [openVersionId, setOpenVersionId] = useState<number | null>(null);
   const current = useRef(date);
   const lastStatus = useRef(job?.status);
   const optimizing = job?.status === "running";
@@ -66,6 +69,7 @@ export function DailyPanel({ date, job, onJob, onChanged, defaultOptimize = fals
     setConfirmDelete(false);
     setActionError(null);
     setConflict(null);
+    setOpenVersionId(null);
     void load();
   }, [date, load]);
 
@@ -146,6 +150,17 @@ export function DailyPanel({ date, job, onJob, onChanged, defaultOptimize = fals
     }
   }
 
+  async function restoreVersion(v: DailyOptimizedVersion) {
+    setActionError(null);
+    try {
+      setEntry(await api<DailyEntry>("POST", `/api/daily/${date}/restore`, { versionId: v.id }));
+      setOpenVersionId(null);
+      onChanged();
+    } catch (e) {
+      setActionError(e as ApiError);
+    }
+  }
+
   async function remove() {
     setActionError(null);
     try {
@@ -172,6 +187,7 @@ export function DailyPanel({ date, job, onJob, onChanged, defaultOptimize = fals
     if (content === null) return null;
     const isActive = entry.active === which;
     const isEditing = editing === which;
+    const versions = entry.optimizedVersions ?? [];
     return (
       <div className="pixel-card min-w-0 p-3" data-active={isActive}>
         <div className="mb-2 flex items-center justify-between gap-2">
@@ -220,6 +236,46 @@ export function DailyPanel({ date, job, onJob, onChanged, defaultOptimize = fals
         )}
         {which === "optimized" && entry.optimizedModel && !isEditing && (
           <p className="mt-2 text-xs text-muted">由 {entry.optimizedModel} 优化</p>
+        )}
+        {which === "optimized" && !isEditing && versions.length > 1 && (
+          <details className="pixel-well mt-3 p-2">
+            <summary className="cursor-pointer text-sm font-semibold">历史版本（{versions.length}）</summary>
+            <ul className="mt-2 divide-y-2 divide-dashed divide-ink/20 text-sm">
+              {versions.map((v) => {
+                const open = openVersionId === v.id;
+                return (
+                  <li key={v.id} className="space-y-1.5 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="min-w-0 text-xs">
+                        <span className="font-semibold">v{v.versionNo}</span> <span className="text-ink-soft">{ORIGIN_LABEL[v.origin]}</span>
+                        {v.restoredFrom ? <span className="text-muted">（来自 v{v.restoredFrom}）</span> : null}
+                        {v.model && <span className="text-muted"> · {v.model}</span>}
+                        <span className="text-muted"> · {fmtTime(v.createdAt)}</span>
+                        {v.isCurrent && <span className="pixel-tag pixel-tag--green ml-1.5">当前</span>}
+                        {v.stale && <span className="pixel-tag pixel-tag--amber ml-1.5">基于旧原文</span>}
+                      </span>
+                      <span className="flex shrink-0 gap-1.5">
+                        <Button size="sm" onClick={() => setOpenVersionId(open ? null : v.id)}>
+                          {open ? "收起" : "查看"}
+                        </Button>
+                        {!v.isCurrent && (
+                          <Button size="sm" onClick={() => restoreVersion(v)}>
+                            恢复
+                          </Button>
+                        )}
+                      </span>
+                    </div>
+                    {open && (
+                      <div className="space-y-1.5">
+                        <p className="whitespace-pre-wrap break-words leading-relaxed">{v.content}</p>
+                        <CopyMenu size="sm" markdown={false} content={v.content} title={`${date} 日报（优化稿 v${v.versionNo}）`} />
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
         )}
       </div>
     );
