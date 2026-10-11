@@ -263,6 +263,46 @@ describe("周报", () => {
     expect(got.body.report.outdated).toBe(true);
   });
 
+  it("生成周报时带上上周周报作对比参考；没有上周周报时明确告知模型", async () => {
+    // 2027-05-03 ~ 05-09 与 05-10 ~ 05-16（周一起始）
+    await submit("2027-05-04", "上周做了权限模块");
+    await submit("2027-05-11", "本周继续权限模块联调");
+
+    faux.setResponses([reply("上周周报正文：权限模块开发中")]);
+    await call(genWeekly, "POST", "/x", { date: "2027-05-04" });
+    // 没有更早的周报：告知模型无法对比，不附上周内容
+    expect(prompts[prompts.length - 1]).toContain("未提供上周周报");
+    expect(prompts[prompts.length - 1]).not.toContain("<上周周报");
+
+    // 上周已有周报：先询问是否附上，不调用大模型
+    faux.setResponses([reply(WEEKLY_TEXT)]);
+    const ask = await call(genWeekly, "POST", "/x", { date: "2027-05-11" });
+    expect(ask.status).toBe(409);
+    expect(ask.body.error).toMatchObject({ code: "CONFIRM_PREVIOUS", previousStart: "2027-05-03", previousEnd: "2027-05-09", previousVersionNo: 1 });
+    expect(faux.getPendingResponseCount()).toBe(1);
+    expect((await call(genWeekly, "POST", "/x", { date: "2027-05-11", includePrevious: "yes" })).body.error.code).toBe("INVALID_PREVIOUS");
+
+    // 选择不附上：与没有上周周报一样告知模型，且不包含上周内容
+    const declined = await call(genWeekly, "POST", "/x", { date: "2027-05-11", includePrevious: false });
+    expect(declined.status).toBe(200);
+    expect(prompts[prompts.length - 1]).toContain("未提供上周周报");
+    expect(prompts[prompts.length - 1]).not.toContain("权限模块开发中");
+
+    // 选择附上
+    faux.setResponses([reply(WEEKLY_TEXT)]);
+    const accepted = await call(genWeekly, "POST", "/x", { date: "2027-05-11", includePrevious: true });
+    expect(accepted.status).toBe(200);
+    const last = prompts[prompts.length - 1];
+    expect(last).toContain("<上周周报");
+    expect(last).toContain("2027-05-03 至 2027-05-09");
+    expect(last).toContain("上周周报正文：权限模块开发中");
+    expect(last).toContain("不得当作本周成果写入");
+    expect(last).not.toContain("未提供上周周报");
+    // 上周周报不参与过期检测：本周刚生成，不应过期
+    const got = await call(getWeekly, "GET", "/api/reports/weekly?date=2027-05-11");
+    expect(got.body.report.outdated).toBe(false);
+  });
+
   it("采用优化稿后，周报使用被采用的版本", async () => {
     await submit("2026-11-02", "周一 写代码");
     faux.setResponses([reply("- 编写业务代码")]);
@@ -294,10 +334,10 @@ describe("周报", () => {
       },
     ]);
     const calls = faux.state.callCount;
-    const first = await call(weeklyStart, "POST", "/x", { date: "2026-11-09" });
+    const first = await call(weeklyStart, "POST", "/x", { date: "2026-11-09", includePrevious: false });
     expect(first.status).toBe(202);
     expect(first.body.job).toMatchObject({ kind: "weekly", target: "2026-11-09", status: "running" });
-    const second = await call(weeklyStart, "POST", "/x", { date: "2026-11-10" });
+    const second = await call(weeklyStart, "POST", "/x", { date: "2026-11-10", includePrevious: false });
     expect(second.status).toBe(202);
     expect(second.body.job.status).toBe("running");
     await new Promise((r) => setTimeout(r, 50));

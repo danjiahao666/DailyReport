@@ -89,16 +89,34 @@ export interface WeeklyDay {
   text: string;
 }
 
-export function weeklyUser(range: { start: string; end: string }, days: WeeklyDay[], missingDates: string[], template: string): string {
+/** 上一周的周报（仅作对比参考） */
+export interface PreviousWeekly {
+  start: string;
+  end: string;
+  content: string;
+}
+
+/** previous 为上一周已有的周报；没有时传 null，会明确告诉模型无法对比 */
+export function weeklyUser(
+  range: { start: string; end: string },
+  days: WeeklyDay[],
+  missingDates: string[],
+  template: string,
+  previous: PreviousWeekly | null = null,
+): string {
   const blocks = days
     .map((d) => `<日报 日期="${d.date}" 星期="${weekdayName(d.date)}">\n${d.text}\n</日报>`)
     .join("\n\n");
   const missing = missingDates.length > 0 ? `\n没有日报的日期：${missingDates.join("、")}` : "";
+  // 上周周报只用于对比进展；没有时明确告知，避免模型编造“较上周”的情况
+  const prev = previous
+    ? `\n\n下面附有上一周（${previous.start} 至 ${previous.end}）的周报，仅用于对比本周相对上周的进展（如已完成、有进展、持续受阻）。上周的内容不属于本周完成事项，不得当作本周成果写入；对比结论必须同时有上周周报和本周日报作依据。\n<上周周报 范围="${previous.start} 至 ${previous.end}">\n${previous.content}\n</上周周报>`
+    : "\n\n未提供上周周报，无法与上周对比：涉及“较上周”的内容，按模板说明处理，没有说明的就省略，不得推测或编造上周的情况。";
   return `请根据下面的日报生成周报。
 统计周期：${range.start} 至 ${range.end}
 有日报的天数：${days.length}${missing}
 
-${blocks}${templateBlock(template)}`;
+${blocks}${prev}${templateBlock(template)}`;
 }
 
 export const MONTHLY_SYSTEM = `你是一名严谨的中文职场写作助手，负责把一个月的日报或周报汇总为月报。

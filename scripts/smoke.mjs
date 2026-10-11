@@ -202,13 +202,15 @@ async function main() {
   ok("手动编辑生成新版本", (await req("PUT", `/api/reports/${wid}`, { content: "## 我的周报\n- 手写内容" })).json.current.versionNo === 2);
   const refine = await run("POST", "/api/reports/weekly", { date: D3 });
   ok("当前是手动编辑版本时，以它为基准重新优化（不再询问）", refine.status === 200 && refine.json.current.versionNo === 3 && refine.json.current.meta.refinedFrom === 2 && refine.json.current.content.includes("手写内容"), refine.json);
-  const ask = await run("POST", "/api/reports/weekly", { date: D3 });
-  ok("当前是模型生成、历史有手动版本时，需先选择基准", ask.status === 409 && ask.json.error.code === "CHOOSE_BASIS" && ask.json.error.manualVersions.some((v) => v.versionNo === 2), ask.json);
+  const sticky = await run("POST", "/api/reports/weekly", { date: D3 });
+  ok("再次点击时沿用同一个手动基准，不再询问", sticky.status === 200 && sticky.json.current.versionNo === 4 && sticky.json.current.meta.refinedFrom === 2, sticky.json);
   const regen = await run("POST", "/api/reports/weekly", { date: D3, basis: "source" });
-  ok("选择不使用手动版本后从日报重新生成，已编辑版本仍保留", regen.json.current.versionNo === 4 && regen.json.versions.some((v) => v.versionNo === 2 && v.content.includes("手写内容")), regen.json);
+  ok("选择不使用手动版本后从日报重新生成，已编辑版本仍保留", regen.json.current.versionNo === 5 && regen.json.versions.some((v) => v.versionNo === 2 && v.content.includes("手写内容")), regen.json);
+  const ask = await run("POST", "/api/reports/weekly", { date: D3 });
+  ok("当前是从日报汇总的版本、历史有手动版本时，需先选择基准", ask.status === 409 && ask.json.error.code === "CHOOSE_BASIS" && ask.json.error.manualVersions.some((v) => v.versionNo === 2), ask.json);
   const v2 = regen.json.versions.find((v) => v.versionNo === 2);
   const rest = await req("POST", `/api/reports/${wid}/restore`, { versionId: v2.id });
-  ok("可恢复历史版本", rest.json.current.content.includes("手写内容") && rest.json.versions.length === 5);
+  ok("可恢复历史版本", rest.json.current.content.includes("手写内容") && rest.json.versions.length === 6);
 
   console.log("4. 月报（2027-01，含跨月周）");
   const planW = await req("GET", "/api/reports/monthly/plan?month=2027-01&source=weekly");

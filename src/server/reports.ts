@@ -12,6 +12,7 @@ import type {
   VersionOrigin,
 } from "@/lib/types";
 import {
+  addDays,
   eachDay,
   isValidDate,
   isValidMonth,
@@ -24,7 +25,7 @@ import { AppError } from "./errors";
 import { listDailies } from "./daily";
 import { startJob } from "./jobs";
 import { generateText } from "./llm/client";
-import { monthlyUser, refineSystem, refineUser, weeklyUser, type MonthlyBlock, type WeeklyDay } from "./llm/prompts";
+import { monthlyUser, refineSystem, refineUser, weeklyUser, type MonthlyBlock, type PreviousWeekly, type WeeklyDay } from "./llm/prompts";
 import { getLlmTimeoutMs, getMaxInputChars, getMaxTokens, getSystemPrompt, getTemplate } from "./prefs";
 import { getWeekStart } from "./settings";
 
@@ -389,12 +390,17 @@ function startRefine(
  * 启动周报生成任务。同步部分（参数、基准选择、无日报提示、长度上限）校验失败时直接返回错误，
  * 此时不会创建任务也不会调用大模型；通过后立即返回任务状态，模型调用在后台执行。
  * basis 见 resolveBasis。
+ * includePrevious：上一周已有周报时，是否附上它作对比参考；未指定时返回 CONFIRM_PREVIOUS 让用户选择。
  */
-export function startWeekly(dateInput: unknown, basisInput?: unknown): JobView {
+export function startWeekly(dateInput: unknown, basisInput?: unknown, includePreviousInput?: unknown): JobView {
   if (!isValidDate(dateInput)) throw new AppError(400, "INVALID_DATE", "日期格式必须为 YYYY-MM-DD 且为有效日期");
+  if (includePreviousInput !== undefined && includePreviousInput !== null && typeof includePreviousInput !== "boolean") {
+    throw new AppError(400, "INVALID_PREVIOUS", "includePrevious 必须是布尔值");
+  }
   const range = weekRange(dateInput, getWeekStart());
   const basis = resolveBasis(getReport("weekly", range.start), basisInput);
   if (basis.kind === "refine") {
+    // 重新优化只依赖基准版本，不涉及上周周报
     return startRefine("weekly", range.start, range, `统计周期：${range.start} 至 ${range.end}`, basis.version);
   }
 
@@ -403,13 +409,28 @@ export function startWeekly(dateInput: unknown, basisInput?: unknown): JobView {
   if (input.days.length === 0) {
     throw new AppError(422, "NO_DAILY", `${range.start} 至 ${range.end} 这一周没有日报，无法生成周报。请先补充日报。`);
   }
-  assertInputSize(input.days.reduce((n, d) => n + d.text.length, 0));
+  // 上一周已有的周报（当前版本）可作对比参考，是否附上由用户决定；它不参与过期检测
+  const prevRange = weekRange(addDays(range.start, -1), getWeekStart());
+  const prevCurrent = getReport("weekly", prevRange.start)?.current ?? null;
+  if (prevCurrent && typeof includePreviousInput !== "boolean") {
+    throw new AppError(
+      409,
+      "CONFIRM_PREVIOUS",
+      "上一周已有周报。是否把它一并发给大模型，用于对比本周与上周的进展？",
+      { previousStart: prevRange.start, previousEnd: prevRange.end, previousVersionNo: prevCurrent.versionNo },
+    );
+  }
+  const previous: PreviousWeekly | null =
+    prevCurrent && includePreviousInput === true
+      ? { start: prevRange.start, end: prevRange.end, content: prevCurrent.content }
+      : null;
+  assertInputSize(input.days.reduce((n, d) => n + d.text.length, 0) + (previous?.content.length ?? 0));
 
   return startJob("weekly", range.start, async () => {
     const { text, model } = await generateText({
       task: "weekly",
       system: getSystemPrompt("weekly"),
-      user: weeklyUser(range, input.days, input.missing, getTemplate("weekly")),
+      user: weeklyUser(range, input.days, input.missing, getTemplate("weekly"), previous),
       maxTokens: getMaxTokens("weekly"),
       timeoutMs: getLlmTimeoutMs(),
     });

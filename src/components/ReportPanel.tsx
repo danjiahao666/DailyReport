@@ -34,6 +34,13 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
   // 当前版本由模型生成、但历史中有手动编辑的版本时，询问是否以其为基准重新优化
   const [chooseBasis, setChooseBasis] = useState<{ currentVersionNo: number; manualVersions: ReportManualChoice[] } | null>(null);
   const [basisId, setBasisId] = useState<number | null>(null);
+  // 周报：上一周已有周报时，询问是否把它附给大模型作对比参考（basis 记住前一步的选择）
+  const [confirmPrevious, setConfirmPrevious] = useState<{
+    start: string;
+    end: string;
+    versionNo: number;
+    basis?: "source" | number;
+  } | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -78,6 +85,7 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
     setViewing(null);
     setActionError(null);
     setChooseBasis(null);
+    setConfirmPrevious(null);
     setDoneNote(false);
     lastStatus.current = job?.status;
     void load();
@@ -110,13 +118,15 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
    * 通过校验后立即返回任务状态，期间可以切换到其他日期或页面。
    * basis 缺省由服务端判断：当前是手动编辑版本则以它为基准重新优化；
    * "source" 表示不使用手动版本、直接从来源重新汇总；数字为作为基准的手动编辑版本 id。
+   * includePrevious（仅周报）：上周已有周报时是否附上作对比参考，缺省时由服务端返回 CONFIRM_PREVIOUS 让用户选择。
    */
-  async function generate(basis?: "source" | number) {
+  async function generate(basis?: "source" | number, includePrevious?: boolean) {
     setGenError(null);
     setChooseBasis(null);
+    setConfirmPrevious(null);
     setDoneNote(false);
     try {
-      const body = kind === "weekly" ? { date: anchor, basis } : { month: anchor, source, basis };
+      const body = kind === "weekly" ? { date: anchor, basis, includePrevious } : { month: anchor, source, basis };
       const res = await api<{ job: JobView }>("POST", `/api/reports/${kind}`, body);
       setViewing(null);
       setEditing(false);
@@ -128,6 +138,13 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
         const manualVersions = versions as ReportManualChoice[];
         setChooseBasis({ currentVersionNo: Number(err.data.currentVersionNo), manualVersions });
         setBasisId(manualVersions[0].id); // 默认选最新的手动编辑版本
+      } else if (err.code === "CONFIRM_PREVIOUS" && kind === "weekly") {
+        setConfirmPrevious({
+          start: String(err.data.previousStart),
+          end: String(err.data.previousEnd),
+          versionNo: Number(err.data.previousVersionNo),
+          basis,
+        });
       } else setGenError(err);
     }
   }
@@ -372,6 +389,23 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
           </details>
         )}
       </div>
+
+      {confirmPrevious && (
+        <Modal title="附上上周周报作对比？" onClose={() => setConfirmPrevious(null)}>
+          <p className="mb-4 text-sm text-ink-soft">
+            上一周（{confirmPrevious.start} 至 {confirmPrevious.end}）已有周报（当前 v{confirmPrevious.versionNo}）。
+            附上后，大模型会对比本周与上周的进展（已完成、有进展、持续受阻等）；上周内容<strong>只作对比参考</strong>，不会当作本周成果写入。
+            不附上则只根据本周日报生成，且不会做上周对比。
+          </p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button onClick={() => setConfirmPrevious(null)}>取消</Button>
+            <Button onClick={() => generate(confirmPrevious.basis, false)}>不附上</Button>
+            <Button variant="primary" onClick={() => generate(confirmPrevious.basis, true)}>
+              附上并生成
+            </Button>
+          </div>
+        </Modal>
+      )}
 
       {chooseBasis && (
         <Modal title={`以手动编辑的版本为基准？`} onClose={() => setChooseBasis(null)}>

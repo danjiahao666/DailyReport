@@ -175,7 +175,7 @@ describe("设置中心：对业务的影响", () => {
     // 再造一条超过 1000 字符的日报
     await call(submitRoute, "POST", "/api/daily", { date: "2026-10-20", content: "字".repeat(1200) });
     faux.setResponses([reply(WEEKLY_TEXT)]);
-    const r = await call(genWeekly, "POST", "/x", { date: "2026-10-19" });
+    const r = await call(genWeekly, "POST", "/x", { date: "2026-10-19", includePrevious: false });
     expect(r.status).toBe(413);
     expect(r.body.error.code).toBe("INPUT_TOO_LARGE");
     expect(systems).toHaveLength(0);
@@ -246,16 +246,16 @@ describe("设置中心：参考模板", () => {
     expect(users.at(-1)).toContain("遇到问题：");
 
     faux.setResponses([reply(WEEKLY_TEXT)]);
-    await call(genWeekly, "POST", "/x", { date: "2026-11-09" });
+    await call(genWeekly, "POST", "/x", { date: "2026-11-09", includePrevious: false });
     expect(users.at(-1)).toContain("## 我的周报");
-    expect(users.at(-1)).not.toContain("## 本周完成事项");
+    expect(users.at(-1)).not.toContain("【按事项合并同类内容"); // 默认模板的写作说明不应出现（上周周报正文里可能有默认标题）
 
     await put({ templates: { optimize: null, weekly: "  " } });
     const { body } = await get();
     expect(body.templates.optimize.custom).toBeNull();
     expect(body.templates.weekly.custom).toBeNull();
     faux.setResponses([reply(WEEKLY_TEXT)]);
-    await call(genWeekly, "POST", "/x", { date: "2026-11-09" });
+    await call(genWeekly, "POST", "/x", { date: "2026-11-09", includePrevious: false });
     expect(users.at(-1)).toContain("## 本周完成事项");
   });
 

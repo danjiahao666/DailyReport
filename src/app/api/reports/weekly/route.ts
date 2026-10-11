@@ -14,8 +14,8 @@ export const GET = route((req) => {
   return { range, report: getReport("weekly", range.start) };
 });
 
-/** 启动周报生成（异步）；没有日报、需要选择重新优化的基准等情况会直接返回错误，不创建任务。basis：缺省自动判断，"source" 从日报生成，数字为作为基准的手动编辑版本 id */
+/** 启动周报生成（异步）；没有日报、需要选择重新优化的基准等情况会直接返回错误，不创建任务。basis：缺省自动判断，"source" 从日报生成，数字为作为基准的手动编辑版本 id；includePrevious：上周已有周报时是否附上作对比参考，缺省时返回 CONFIRM_PREVIOUS */
 export const POST = route(async (req) => {
   const body = await readJson(req);
-  return json({ job: startWeekly(body.date, body.basis) }, 202);
+  return json({ job: startWeekly(body.date, body.basis, body.includePrevious) }, 202);
 });
