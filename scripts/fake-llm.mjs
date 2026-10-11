@@ -31,6 +31,9 @@ function compose(system, user) {
   if (system.includes("工作日报") && system.includes("优化规则")) {
     return bullets(between(user, "<日报原文>", "</日报原文>")).join("\n");
   }
+  // 以手动编辑过的成稿为基准重新优化：原样返回成稿，便于验证流程
+  const refine = user.match(/<待优化(?:周报|月报)>\n([\s\S]*?)\n<\/待优化(?:周报|月报)>/);
+  if (refine) return refine[1];
   const blocks = [...user.matchAll(/<(日报|周报)\s+[^>]*>\n([\s\S]*?)\n<\/\1>/g)];
   const lines = blocks.flatMap((b) => bullets(b[2]));
   const done = lines.length ? lines.join("\n") : "- （无）";

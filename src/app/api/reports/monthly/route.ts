@@ -12,8 +12,8 @@ export const GET = route((req) => {
   return { range, report: getReport("monthly", range.start) };
 });
 
-/** 启动月报生成（异步） */
+/** 启动月报生成（异步）；basis 含义同周报 */
 export const POST = route(async (req) => {
   const body = await readJson(req);
-  return json({ job: startMonthly(body.month, body.source, body.confirm) }, 202);
+  return json({ job: startMonthly(body.month, body.source, body.basis) }, 202);
 });

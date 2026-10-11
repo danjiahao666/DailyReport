@@ -193,24 +193,64 @@ describe("周报", () => {
     expect(edited.body.current.versionNo).toBe(2);
     expect(edited.body.current.origin).toBe("edited");
 
-    // 当前为手动编辑版本时，重新生成需要确认
+    // 当前为手动编辑版本：不再询问，直接以当前版本为基准让大模型重新优化，不读取日报
+    faux.setResponses([reply("## 本周完成事项\n- 优化后的周报")]);
+    const refined = await call(genWeekly, "POST", "/x", { date: "2026-10-23" });
+    expect(refined.status).toBe(200);
+    expect(refined.body.current).toMatchObject({ versionNo: 3, origin: "generated", content: "## 本周完成事项\n- 优化后的周报", meta: { refinedFrom: 2 } });
+    expect(refined.body.currentManual).toBe(false);
+    expect(prompts[prompts.length - 1]).toContain("待优化周报");
+    expect(prompts[prompts.length - 1]).toContain("我手动改过的周报");
+    expect(prompts[prompts.length - 1]).not.toContain("周一联调接口");
+    const v2 = refined.body.versions.find((v: { versionNo: number }) => v.versionNo === 2);
+    expect(v2.content).toBe("我手动改过的周报");
+
+    // 当前版本就是从手动版本优化来的：沿用同一个基准再优化一次，不再询问
+    faux.setResponses([reply("第二次优化")]);
+    const again = await call(genWeekly, "POST", "/x", { date: "2026-10-23" });
+    expect(again.body.current).toMatchObject({ versionNo: 4, content: "第二次优化", meta: { refinedFrom: 2 } });
+    expect(prompts[prompts.length - 1]).toContain("我手动改过的周报");
+    expect(prompts[prompts.length - 1]).not.toContain("- 优化后的周报"); // 基准是手动版本，而不是上一次优化的结果
+
+    // 显式选择不使用手动版本：从日报重新汇总
     faux.setResponses([reply(WEEKLY_TEXT + "\n- 重新生成")]);
-    const refused = await call(genWeekly, "POST", "/x", { date: "2026-10-23" });
-    expect(refused.status).toBe(409);
-    expect(refused.body.error.code).toBe("CONFIRM_OVERWRITE_EDITED");
+    const regen = await call(genWeekly, "POST", "/x", { date: "2026-10-23", basis: "source" });
+    expect(regen.body.current).toMatchObject({ versionNo: 5, origin: "generated" });
+    expect(regen.body.current.meta.refinedFrom).toBeUndefined();
+    expect(prompts[prompts.length - 1]).toContain("周一联调接口");
+    expect(regen.body.versions.map((v: { versionNo: number }) => v.versionNo)).toEqual([5, 4, 3, 2, 1]);
+
+    // 当前为模型生成（从日报汇总）、但之前有手动编辑的版本：先询问，返回可选的手动版本，不调用大模型
+    faux.setResponses([reply("不应被调用")]);
+    const asked = await call(genWeekly, "POST", "/x", { date: "2026-10-23" });
+    expect(asked.status).toBe(409);
+    expect(asked.body.error.code).toBe("CHOOSE_BASIS");
+    expect(asked.body.error.currentVersionNo).toBe(5);
+    expect(asked.body.error.manualVersions).toEqual([expect.objectContaining({ id: v2.id, versionNo: 2 })]);
     expect(faux.getPendingResponseCount()).toBe(1);
 
-    const regen = await call(genWeekly, "POST", "/x", { date: "2026-10-23", confirm: true });
-    expect(regen.body.current.versionNo).toBe(3);
-    expect(regen.body.versions.map((v: { versionNo: number }) => v.versionNo)).toEqual([3, 2, 1]);
-    expect(regen.body.versions.find((v: { versionNo: number }) => v.versionNo === 2).content).toBe("我手动改过的周报");
+    // 选择指定的手动版本为基准
+    faux.setResponses([reply("基于 v2 再次优化")]);
+    const picked = await call(genWeekly, "POST", "/x", { date: "2026-10-23", basis: v2.id });
+    expect(picked.body.current).toMatchObject({ versionNo: 6, meta: { refinedFrom: 2 } });
+    expect(prompts[prompts.length - 1]).toContain("我手动改过的周报");
 
-    // 恢复手动编辑版本：新增 restored 版本，历史不丢
-    const v2 = regen.body.versions.find((v: { versionNo: number }) => v.versionNo === 2);
+    // 基准必须是本报告里手动编辑的版本
+    const v1 = picked.body.versions.find((v: { versionNo: number }) => v.versionNo === 1);
+    expect((await call(genWeekly, "POST", "/x", { date: "2026-10-23", basis: v1.id })).body.error.code).toBe("INVALID_BASIS");
+    expect((await call(genWeekly, "POST", "/x", { date: "2026-10-23", basis: 999999 })).body.error.code).toBe("INVALID_BASIS");
+    expect((await call(genWeekly, "POST", "/x", { date: "2026-10-23", basis: "x" })).body.error.code).toBe("INVALID_BASIS");
+
+    // 恢复手动编辑版本：新增 restored 版本，历史不丢；它的内容仍是手动内容，重新生成时直接以它为基准
     const restored = await call(restoreReport, "POST", "/x", { versionId: v2.id }, { id: String(id) });
     expect(restored.body.current.content).toBe("我手动改过的周报");
     expect(restored.body.current.origin).toBe("restored");
-    expect(restored.body.versions).toHaveLength(4);
+    expect(restored.body.currentManual).toBe(true);
+    expect(restored.body.versions).toHaveLength(7);
+    faux.setResponses([reply("基于恢复版本优化")]);
+    const fromRestored = await call(genWeekly, "POST", "/x", { date: "2026-10-23" });
+    expect(fromRestored.body.current).toMatchObject({ versionNo: 8, content: "基于恢复版本优化", meta: { refinedFrom: 7 } });
+    expect(prompts[prompts.length - 1]).toContain("我手动改过的周报");
 
     const got = await call(getWeekly, "GET", "/api/reports/weekly?date=2026-10-20");
     expect(got.body.report.id).toBe(id);
@@ -328,6 +368,21 @@ describe("月报与跨月周", () => {
     expect(m.body.report.versions).toHaveLength(2);
     const edited = await call(editReport, "PUT", "/x", { content: "手工月报" }, { id: String(m.body.report.id) });
     expect(edited.body.current.origin).toBe("edited");
+
+    // 月报同样：当前是手动版本时以它为基准重新优化，不需要数据来源，也不读取日报/周报
+    faux.setResponses([reply("优化后的月报")]);
+    const refinedMonthly = await call(genMonthly, "POST", "/x", { month: "2027-01" });
+    expect(refinedMonthly.body.current).toMatchObject({ versionNo: 4, origin: "generated", meta: { refinedFrom: 3 } });
+    expect(prompts[prompts.length - 1]).toContain("手工月报");
+    expect(prompts[prompts.length - 1]).toContain("待优化月报");
+    faux.setResponses([reply("第二次优化月报")]);
+    const againMonthly = await call(genMonthly, "POST", "/x", { month: "2027-01" });
+    expect(againMonthly.body.current).toMatchObject({ versionNo: 5, meta: { refinedFrom: 3 } }); // 沿用同一个手动基准
+    faux.setResponses([reply(MONTHLY_TEXT)]);
+    const fromSource = await call(genMonthly, "POST", "/x", { month: "2027-01", source: "daily", basis: "source" });
+    expect(fromSource.body.current.versionNo).toBe(6);
+    const askedMonthly = await call(genMonthly, "POST", "/x", { month: "2027-01", source: "daily" });
+    expect(askedMonthly.body.error.code).toBe("CHOOSE_BASIS");
 
     const cal = await call(calendar, "GET", "/api/calendar?month=2027-01");
     expect(cal.body.monthly.periodStart).toBe("2027-01-01");

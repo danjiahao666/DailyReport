@@ -50,6 +50,8 @@ export interface ReportMeta {
   warnings?: string[];
   /** 由哪个历史版本恢复而来 */
   restoredFrom?: number;
+  /** 以哪个手动编辑的版本（版本号）为基准，由大模型重新优化而来 */
+  refinedFrom?: number;
 }
 
 export interface ReportVersion {
@@ -70,10 +72,19 @@ export interface Report {
   currentVersionId: number | null;
   current: ReportVersion | null;
   versions: ReportVersion[];
+  /** 当前版本的内容出自手动编辑（含由手动编辑版本恢复而来）；此时重新生成会以当前版本为基准重新优化 */
+  currentManual: boolean;
   /** 来源日报/周报在上次生成之后发生了变化 */
   outdated: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 重新生成时可作为基准的手动编辑版本（CHOOSE_BASIS 错误携带，新的在前） */
+export interface ReportManualChoice {
+  id: number;
+  versionNo: number;
+  createdAt: string;
 }
 
 export interface ReportSummary {

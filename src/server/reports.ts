@@ -24,7 +24,7 @@ import { AppError } from "./errors";
 import { listDailies } from "./daily";
 import { startJob } from "./jobs";
 import { generateText } from "./llm/client";
-import { monthlyUser, weeklyUser, type MonthlyBlock, type WeeklyDay } from "./llm/prompts";
+import { monthlyUser, refineSystem, refineUser, weeklyUser, type MonthlyBlock, type WeeklyDay } from "./llm/prompts";
 import { getLlmTimeoutMs, getMaxInputChars, getMaxTokens, getSystemPrompt, getTemplate } from "./prefs";
 import { getWeekStart } from "./settings";
 
@@ -101,10 +101,28 @@ function buildReport(row: ReportRow): Report {
     currentVersionId: row.current_version_id,
     current,
     versions,
+    currentManual: current ? isManualContent(current, versions) : false,
     outdated: computeOutdated(row, versions),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * 版本内容是否出自用户手动编辑：手动编辑的版本，以及沿“恢复自”链追溯到手动编辑版本的恢复版本。
+ * 恢复只是复制内容，所以从手动编辑版本恢复出来的版本同样应视为用户的手动内容。
+ */
+function isManualContent(version: ReportVersion, versions: ReportVersion[]): boolean {
+  const seen = new Set<number>();
+  let cur: ReportVersion | undefined = version;
+  while (cur && !seen.has(cur.id)) {
+    if (cur.origin === "edited") return true;
+    if (cur.origin !== "restored") return false;
+    seen.add(cur.id);
+    const from: number | undefined = cur.meta?.restoredFrom;
+    cur = versions.find((v) => v.versionNo === from);
+  }
+  return false;
 }
 
 export function getReport(kind: ReportKind, periodStart: string): Report | null {
@@ -287,42 +305,104 @@ function computeOutdated(row: ReportRow, versions: ReportVersion[]): boolean {
 
 // ---------- 生成 ----------
 
-function assertNotOverwritingEdits(existing: Report | null, confirm: unknown): void {
-  if (existing?.current && existing.current.origin !== "generated" && confirm !== true) {
-    throw new AppError(
-      409,
-      "CONFIRM_OVERWRITE_EDITED",
-      "当前版本包含手动编辑或由历史版本恢复。重新生成会新增一个版本并设为当前版本，现有内容会保留在历史版本中，是否继续？",
-      { currentVersionNo: existing.current.versionNo },
-    );
+type Basis = { kind: "source" } | { kind: "refine"; version: ReportVersion };
+
+/**
+ * 决定重新生成的基准：
+ *  - 指定 basis="source"：直接从来源日报/周报生成；
+ *  - 指定 basis=版本 id：以该手动编辑的版本为基准重新优化；
+ *  - 未指定：当前版本是手动编辑的就以当前版本为基准；当前版本是从某个手动版本优化来的，
+ *    泿用同一个基准；当前版本由模型从来源生成、但历史中有手动编辑的版本时，
+ *    返回 CHOOSE_BASIS 让用户选择；其余情况从来源生成。
+ * 重新生成始终只新增版本，不会删除或覆盖任何历史版本。
+ */
+function resolveBasis(existing: Report | null, basisInput: unknown): Basis {
+  if (basisInput === "source") return { kind: "source" };
+  if (basisInput !== undefined && basisInput !== null) {
+    const picked =
+      typeof basisInput === "number" && Number.isInteger(basisInput)
+        ? existing?.versions.find((v) => v.id === basisInput)
+        : undefined;
+    if (!existing || !picked || !isManualContent(picked, existing.versions)) {
+      throw new AppError(400, "INVALID_BASIS", "所选基准版本不存在，或不是手动编辑的版本");
+    }
+    return { kind: "refine", version: picked };
   }
+  if (!existing?.current) return { kind: "source" };
+  if (existing.currentManual) return { kind: "refine", version: existing.current };
+  // 当前版本就是从某个手动版本优化来的：泿用同一个基准再优化一次，不再重复询问
+  const refinedFrom = existing.current.origin === "generated" ? existing.current.meta?.refinedFrom : undefined;
+  if (refinedFrom !== undefined) {
+    const base = existing.versions.find((v) => v.versionNo === refinedFrom);
+    if (base && isManualContent(base, existing.versions)) return { kind: "refine", version: base };
+  }
+  const manual = existing.versions.filter((v) => v.origin === "edited");
+  if (manual.length === 0) return { kind: "source" };
+  throw new AppError(
+    409,
+    "CHOOSE_BASIS",
+    "当前版本由模型生成，但历史中有手动编辑的版本。是否以手动编辑的版本为基准重新优化？",
+    {
+      currentVersionNo: existing.current.versionNo,
+      manualVersions: manual.map((v) => ({ id: v.id, versionNo: v.versionNo, createdAt: v.createdAt })),
+    },
+  );
 }
 
-function assertInputSize(chars: number): void {
+function assertInputSize(chars: number, hint = "月报可改用“周报”作为数据来源以缩短输入。"): void {
   const max = getMaxInputChars();
   if (chars > max) {
-    throw new AppError(
-      413,
-      "INPUT_TOO_LARGE",
-      `待汇总的内容过长（${chars} 字符，上限 ${max}）。月报可改用“周报”作为数据来源以缩短输入。`,
-    );
+    throw new AppError(413, "INPUT_TOO_LARGE", `待处理的内容过长（${chars} 字符，上限 ${max}）。${hint}`);
   }
 }
 
 /**
- * 启动周报生成任务。同步部分（参数、无日报提示、覆盖确认、长度上限）校验失败时直接返回错误，
- * 此时不会创建任务也不会调用大模型；通过后立即返回任务状态，模型调用在后台执行。
+ * 以手动编辑的版本为基准让大模型重新优化。只使用该版本的正文，不再读取日报，
+ * 因此即使来源日报已经变化或被删除也可以执行。结果记为新的“模型生成”版本。
+ * 不写 inputHash，过期检测仍然沿用最近一次从来源生成的版本，不会把“来源已变化”的提示误清除。
  */
-export function startWeekly(dateInput: unknown, confirm?: unknown): JobView {
+function startRefine(
+  kind: ReportKind,
+  jobTarget: string,
+  period: { start: string; end: string },
+  periodText: string,
+  base: ReportVersion,
+): JobView {
+  assertInputSize(base.content.length, "请先精简该版本的内容。");
+  return startJob(kind, jobTarget, async () => {
+    const { text, model } = await generateText({
+      task: kind,
+      system: refineSystem(getSystemPrompt(kind)),
+      user: refineUser(kind, periodText, base.content, getTemplate(kind)),
+      maxTokens: getMaxTokens(kind),
+      timeoutMs: getLlmTimeoutMs(),
+    });
+    const meta: ReportMeta = { refinedFrom: base.versionNo };
+    transaction((db) => {
+      const reportId = ensureReport(db, kind, period.start, period.end);
+      appendVersion(db, reportId, { content: text, origin: "generated", model, meta });
+    });
+  });
+}
+
+/**
+ * 启动周报生成任务。同步部分（参数、基准选择、无日报提示、长度上限）校验失败时直接返回错误，
+ * 此时不会创建任务也不会调用大模型；通过后立即返回任务状态，模型调用在后台执行。
+ * basis 见 resolveBasis。
+ */
+export function startWeekly(dateInput: unknown, basisInput?: unknown): JobView {
   if (!isValidDate(dateInput)) throw new AppError(400, "INVALID_DATE", "日期格式必须为 YYYY-MM-DD 且为有效日期");
   const range = weekRange(dateInput, getWeekStart());
-  const input = collectWeekly(range);
+  const basis = resolveBasis(getReport("weekly", range.start), basisInput);
+  if (basis.kind === "refine") {
+    return startRefine("weekly", range.start, range, `统计周期：${range.start} 至 ${range.end}`, basis.version);
+  }
 
+  const input = collectWeekly(range);
   // 没有日报时直接返回明确提示，不调用大模型
   if (input.days.length === 0) {
     throw new AppError(422, "NO_DAILY", `${range.start} 至 ${range.end} 这一周没有日报，无法生成周报。请先补充日报。`);
   }
-  assertNotOverwritingEdits(getReport("weekly", range.start), confirm);
   assertInputSize(input.days.reduce((n, d) => n + d.text.length, 0));
 
   return startJob("weekly", range.start, async () => {
@@ -342,20 +422,25 @@ export function startWeekly(dateInput: unknown, confirm?: unknown): JobView {
 }
 
 /** 启动月报生成任务，校验与返回方式同 startWeekly */
-export function startMonthly(monthInput: unknown, sourceInput: unknown, confirm?: unknown): JobView {
+export function startMonthly(monthInput: unknown, sourceInput: unknown, basisInput?: unknown): JobView {
   if (!isValidMonth(monthInput)) throw new AppError(400, "INVALID_MONTH", "月份格式必须为 YYYY-MM");
+  const month = monthInput;
+  const mr = monthRange(month);
+  const basis = resolveBasis(getReport("monthly", mr.start), basisInput);
+  if (basis.kind === "refine") {
+    // 重新优化只依赖基准版本，不需要数据来源
+    return startRefine("monthly", month, mr, `月份：${month}`, basis.version);
+  }
+
   if (sourceInput !== "daily" && sourceInput !== "weekly") {
     throw new AppError(400, "INVALID_SOURCE", "source 只能是 daily 或 weekly");
   }
-  const month = monthInput;
   const source: MonthlySource = sourceInput;
-  const mr = monthRange(month);
   const input = collectMonthly(month, source);
 
   if (input.blocks.length === 0) {
     throw new AppError(422, "NO_DATA", `${month} 没有可用的日报或周报，无法生成月报。请先补充日报。`);
   }
-  assertNotOverwritingEdits(getReport("monthly", mr.start), confirm);
   assertInputSize(input.blocks.reduce((n, b) => n + b.text.length, 0));
 
   return startJob("monthly", month, async () => {

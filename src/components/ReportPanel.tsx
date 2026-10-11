@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api-client";
 import { fmtTime, ORIGIN_LABEL } from "@/lib/format";
-import type { JobView, MonthlyPlan, MonthlySource, Report, ReportVersion } from "@/lib/types";
+import type { JobView, MonthlyPlan, MonthlySource, Report, ReportManualChoice, ReportVersion } from "@/lib/types";
 import { CopyMenu } from "./CopyMenu";
 import { Markdown } from "./Markdown";
 import { Icon } from "./pixel";
@@ -31,7 +31,9 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
 
   const [genError, setGenError] = useState<ApiError | null>(null);
   const [doneNote, setDoneNote] = useState(false);
-  const [confirmRegen, setConfirmRegen] = useState<{ versionNo: number } | null>(null);
+  // 当前版本由模型生成、但历史中有手动编辑的版本时，询问是否以其为基准重新优化
+  const [chooseBasis, setChooseBasis] = useState<{ currentVersionNo: number; manualVersions: ReportManualChoice[] } | null>(null);
+  const [basisId, setBasisId] = useState<number | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -44,6 +46,10 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
   const generating = job?.status === "running";
 
   const label = kind === "weekly" ? "周报" : "月报";
+  // 历史中有手动编辑的版本：提供“从来源重新汇总”的入口
+  const hasManual = !!report?.versions.some((v) => v.origin === "edited");
+  // 点主按钮时会以手动版本为基准重新优化：当前是手动版本，或当前是从某个手动版本优化来的
+  const refining = !!report && (report.currentManual || (report.current?.origin === "generated" && !!report.current.meta?.refinedFrom));
   const reportUrl = kind === "weekly" ? `/api/reports/weekly?date=${anchor}` : `/api/reports/monthly?month=${anchor}`;
 
   const load = useCallback(async () => {
@@ -71,7 +77,7 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
     setEditing(false);
     setViewing(null);
     setActionError(null);
-    setConfirmRegen(null);
+    setChooseBasis(null);
     setDoneNote(false);
     lastStatus.current = job?.status;
     void load();
@@ -100,23 +106,29 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
   }, [kind, anchor, source, report?.updatedAt]);
 
   /**
-   * 启动后台生成：没有日报、需要确认覆盖等情况会立即返回错误；
+   * 启动后台生成：没有日报、需要选择基准等情况会立即返回错误；
    * 通过校验后立即返回任务状态，期间可以切换到其他日期或页面。
+   * basis 缺省由服务端判断：当前是手动编辑版本则以它为基准重新优化；
+   * "source" 表示不使用手动版本、直接从来源重新汇总；数字为作为基准的手动编辑版本 id。
    */
-  async function generate(confirm = false) {
+  async function generate(basis?: "source" | number) {
     setGenError(null);
-    setConfirmRegen(null);
+    setChooseBasis(null);
     setDoneNote(false);
     try {
-      const body = kind === "weekly" ? { date: anchor, confirm } : { month: anchor, source, confirm };
+      const body = kind === "weekly" ? { date: anchor, basis } : { month: anchor, source, basis };
       const res = await api<{ job: JobView }>("POST", `/api/reports/${kind}`, body);
       setViewing(null);
       setEditing(false);
       onJob(res.job);
     } catch (e) {
       const err = e as ApiError;
-      if (err.code === "CONFIRM_OVERWRITE_EDITED") setConfirmRegen({ versionNo: Number(err.data.currentVersionNo) });
-      else setGenError(err);
+      const versions = err.data.manualVersions;
+      if (err.code === "CHOOSE_BASIS" && Array.isArray(versions) && versions.length > 0) {
+        const manualVersions = versions as ReportManualChoice[];
+        setChooseBasis({ currentVersionNo: Number(err.data.currentVersionNo), manualVersions });
+        setBasisId(manualVersions[0].id); // 默认选最新的手动编辑版本
+      } else setGenError(err);
     }
   }
 
@@ -175,9 +187,27 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
             </p>
           )}
         </div>
-        <Button size="sm" variant="primary" onClick={() => generate(false)} disabled={generating || loading}>
-          {generating ? "生成中…" : report ? `重新生成${label}` : `生成${label}`}
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {hasManual && (
+            <Button
+              size="sm"
+              onClick={() => generate("source")}
+              disabled={generating || loading}
+              title={`不使用手动编辑的版本，重新汇总来源内容生成${label}（会新增版本，不删除现有内容）`}
+            >
+              {kind === "weekly" ? "从日报重新汇总" : "重新汇总来源内容"}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => generate()}
+            disabled={generating || loading}
+            title={refining ? `将以手动编辑的版本为基准让大模型重新优化${label}` : undefined}
+          >
+            {generating ? (refining ? "优化中…" : "生成中…") : report ? (refining ? `重新优化${label}` : `重新生成${label}`) : `生成${label}`}
+          </Button>
+        </div>
       </header>
 
       <div className="space-y-4 p-4">
@@ -221,15 +251,16 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
         {loading && <Spinner label="加载中…" />}
         {loadError && <ErrorNotice error={loadError} onRetry={load} />}
         {generating && <Spinner label={`大模型正在后台生成${label}，可以切换到其他日期或页面，完成后回来查看…`} />}
-        {genError && <ErrorNotice error={genError} onRetry={() => generate(false)} busy={generating} />}
+        {genError && <ErrorNotice error={genError} onRetry={() => generate()} busy={generating} />}
         {job?.status === "failed" && (
-          <JobFailed job={job} note={`已保存的日报和${label}历史版本不受影响；可直接重试。`} onRetry={() => generate(false)} onDismiss={dismissJob} busy={generating} />
+          <JobFailed job={job} note={`已保存的日报和${label}历史版本不受影响；可直接重试。`} onRetry={() => generate()} onDismiss={dismissJob} busy={generating} />
         )}
         {doneNote && !generating && <Notice tone="info">{label}已生成，保存为新版本。</Notice>}
         {actionError && <ErrorNotice error={actionError} />}
         {report?.outdated && (
-          <Notice tone="warn" onRetry={() => generate(false)} retryLabel="重新生成" busy={generating}>
+          <Notice tone="warn" onRetry={() => generate()} retryLabel={refining ? "重新优化" : "重新生成"} busy={generating}>
             自上次生成后，来源日报{kind === "monthly" ? "或周报" : ""}已发生变化，内容可能不是最新的。
+            {refining && `“重新优化”只会以手动编辑的版本为基准润色，不会重新汇总来源内容；需要最新内容请点“${kind === "weekly" ? "从日报重新汇总" : "重新汇总来源内容"}”。`}
           </Notice>
         )}
 
@@ -310,6 +341,11 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
                       <span className="font-semibold">v{v.versionNo}</span>{" "}
                       <span className="text-ink-soft">{ORIGIN_LABEL[v.origin]}</span>
                       {v.meta?.restoredFrom ? <span className="text-muted">（来自 v{v.meta.restoredFrom}）</span> : null}
+                      {v.origin === "generated" && v.meta?.refinedFrom ? (
+                        <span className="text-muted">
+                          （基于{report.versions.find((x) => x.versionNo === v.meta?.refinedFrom)?.origin === "edited" ? "手动编辑的 " : " "}v{v.meta.refinedFrom} 优化）
+                        </span>
+                      ) : null}
                       {v.model && <span className="text-muted"> · {v.model}</span>}
                       <span className="text-muted"> · {fmtTime(v.createdAt)}</span>
                       {isCurrent && <span className="pixel-tag pixel-tag--green ml-1.5">当前</span>}
@@ -318,6 +354,11 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
                       <Button size="sm" onClick={() => setViewing(v)} disabled={editing}>
                         查看
                       </Button>
+                      {v.origin === "edited" && (
+                        <Button size="sm" onClick={() => generate(v.id)} disabled={editing || generating}>
+                          以此优化
+                        </Button>
+                      )}
                       {!isCurrent && (
                         <Button size="sm" onClick={() => restore(v)} disabled={editing}>
                           恢复
@@ -332,16 +373,33 @@ export function ReportPanel({ kind, anchor, job, onJob, onChanged }: Props) {
         )}
       </div>
 
-      {confirmRegen && (
-        <Modal title={`重新生成${label}？`} onClose={() => setConfirmRegen(null)}>
-          <p className="mb-4 text-sm text-ink-soft">
-            当前版本（v{confirmRegen.versionNo}）包含你的手动编辑或恢复内容。重新生成会新增一个版本并设为当前版本；
+      {chooseBasis && (
+        <Modal title={`以手动编辑的版本为基准？`} onClose={() => setChooseBasis(null)}>
+          <p className="mb-3 text-sm text-ink-soft">
+            当前版本（v{chooseBasis.currentVersionNo}）由模型生成，但历史中有你手动编辑过的版本。
+            是否以手动编辑的版本为基准，让大模型重新优化{label}？重新生成会新增一个版本并设为当前版本，
             现有内容<strong>不会被删除</strong>，仍可在历史版本中查看和恢复。
           </p>
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => setConfirmRegen(null)}>取消</Button>
-            <Button variant="primary" onClick={() => generate(true)}>
-              继续生成
+          <label className="mb-4 block text-sm">
+            <span className="mb-1 block font-semibold">基准版本</span>
+            <select
+              value={basisId ?? chooseBasis.manualVersions[0].id}
+              onChange={(e) => setBasisId(Number(e.target.value))}
+              className="pixel-field w-full"
+              aria-label="选择作为基准的手动编辑版本"
+            >
+              {chooseBasis.manualVersions.map((v) => (
+                <option key={v.id} value={v.id}>
+                  v{v.versionNo} · {ORIGIN_LABEL.edited} · {fmtTime(v.createdAt)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button onClick={() => setChooseBasis(null)}>取消</Button>
+            <Button onClick={() => generate("source")}>不使用，重新汇总来源内容</Button>
+            <Button variant="primary" onClick={() => generate(basisId ?? chooseBasis.manualVersions[0].id)}>
+              以所选版本重新优化
             </Button>
           </div>
         </Modal>

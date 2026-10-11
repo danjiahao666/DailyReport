@@ -150,6 +150,31 @@ export function monthlyUser(month: string, blocks: MonthlyBlock[], template: str
 ${body}${templateBlock(template)}`;
 }
 
+// ---------- 以已有（手动编辑过的）周报/月报为基准重新优化 ----------
+
+const REFINE_RULES = `重新优化模式（与上面“根据日报/周报汇总”的描述冲突时，以本节为准）：
+- 用户消息提供的不是日报或周报材料，而是用户手动编辑过的成稿。你的任务是在成稿的基础上重新优化，而不是重新汇总。
+- 保留成稿中的全部事实、数字、对象、结论与先后关系，不得新增、删除或改变含义；不要补充成稿没有的内容。
+- 可以做的：修正错别字与病句、统一术语与表述、理顺条理、合并重复事项。
+- 用户手动写入的内容必须保留，即使与模板或“只汇总日报”的要求不一致。
+- 有 <输出模板> 时，按模板的标题与排版整理成稿内容；成稿中模板没有的内容归入最贴近的小节，不得丢弃；成稿没有涉及的小节，按模板说明处理（如“没有则写……”），没有说明的写“（原文未涉及）”。`;
+
+/** 在周报/月报系统提示词（可能是用户自定义的）后追加重新优化规则 */
+export function refineSystem(system: string): string {
+  return `${system}\n\n${REFINE_RULES}`;
+}
+
+/** 以手动编辑过的周报/月报成稿为基准的用户消息；period 如“统计周期：2026-10-05 至 2026-10-11” */
+export function refineUser(kind: "weekly" | "monthly", period: string, content: string, template: string): string {
+  const label = kind === "weekly" ? "周报" : "月报";
+  return `请对下面这份用户手动编辑过的${label}重新优化，只输出优化后的${label}正文。
+${period}
+
+<待优化${label}>
+${content}
+</待优化${label}>${templateBlock(template)}`;
+}
+
 /** 内置默认提示词，设置中心里「恢复默认」与「是否已自定义」都以它为准 */
 export const DEFAULT_PROMPTS = {
   optimize: OPTIMIZE_SYSTEM,

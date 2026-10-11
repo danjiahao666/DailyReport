@@ -144,7 +144,7 @@ describe("周报 / 月报任务", () => {
     expect(faux.state.callCount).toBe(calls);
   });
 
-  it("周报进行中显示在该周起始日上，完成后可查看；需要确认覆盖的校验仍在启动时返回", async () => {
+  it("周报进行中显示在该周起始日上，完成后可查看；需要选择基准的校验仍在启动时返回", async () => {
     await submit("2026-10-14", "周三联调");
     const g = gated(WEEKLY);
     faux.setResponses([g.step]);
@@ -158,9 +158,24 @@ describe("周报 / 月报任务", () => {
     const report = (await call(getWeekly, "GET", "/api/reports/weekly?date=2026-10-14")).body.report;
     expect(report.current.versionNo).toBe(1);
     await call(editReport, "PUT", "/x", { content: "我改过的周报" }, { id: String(report.id) });
-    const refuse = await call(weeklyStart, "POST", "/x", { date: "2026-10-14" });
-    expect(refuse.status).toBe(409);
-    expect(refuse.body.error.code).toBe("CONFIRM_OVERWRITE_EDITED");
+    // 当前是手动版本：直接以它为基准重新优化，作为任务启动
+    faux.setResponses([fauxAssistantMessage([fauxText(WEEKLY)])]);
+    const refine = await call(weeklyStart, "POST", "/x", { date: "2026-10-14" });
+    expect(refine.status).toBe(202);
+    expect((await waitedJob("weekly", "2026-10-12")).status).toBe("succeeded");
+    // 当前版本就是从手动版本优化来的：沿用同一基准，仍作为任务启动
+    faux.setResponses([fauxAssistantMessage([fauxText(WEEKLY)])]);
+    expect((await call(weeklyStart, "POST", "/x", { date: "2026-10-14" })).status).toBe(202);
+    expect((await waitedJob("weekly", "2026-10-12")).status).toBe("succeeded");
+    // 从日报重新汇总后，当前是模型生成、历史中有手动版本：需要选择基准的校验在启动时返回，不创建任务
+    faux.setResponses([fauxAssistantMessage([fauxText(WEEKLY)])]);
+    expect((await call(weeklyStart, "POST", "/x", { date: "2026-10-14", basis: "source" })).status).toBe(202);
+    expect((await waitedJob("weekly", "2026-10-12")).status).toBe("succeeded");
+    const calls = faux.state.callCount;
+    const ask = await call(weeklyStart, "POST", "/x", { date: "2026-10-14" });
+    expect(ask.status).toBe(409);
+    expect(ask.body.error.code).toBe("CHOOSE_BASIS");
+    expect(faux.state.callCount).toBe(calls);
   });
 
   it("月报：状态记在月份上；失败可重试；日历只返回当前月份的月报任务", async () => {

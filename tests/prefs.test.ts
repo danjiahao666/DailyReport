@@ -221,6 +221,19 @@ describe("设置中心：参考模板", () => {
     expect(users.at(-1)).toContain("## 本周完成事项");
   });
 
+  it("模板里写死的日期会被替换为日报所属日期，并告知模型", async () => {
+    await call(submitRoute, "POST", "/api/daily", { date: "2026-11-10", content: "联调接口" });
+    await put({ templates: { optimize: "淡嘉浩--日报\n2026-09-30完成任务进度和计划\n2026年9月30日\n【完成情况】：" } });
+    faux.setResponses([reply("- 联调接口")]);
+    await call(optimizeRoute, "POST", "/x", undefined, { date: "2026-11-10" });
+    expect(users.at(-1)).toContain("2026-11-10完成任务进度和计划");
+    expect(users.at(-1)).toContain("2026年11月10日");
+    expect(users.at(-1)).toContain("日报日期：2026-11-10");
+    expect(users.at(-1)).not.toContain("09-30");
+    expect(users.at(-1)).not.toContain("9月30日");
+    await put({ templates: { optimize: null } });
+  });
+
   it("自定义模板被日报优化与周报用上，清空后回到默认", async () => {
     await call(submitRoute, "POST", "/api/daily", { date: "2026-11-09", content: "联调接口" });
     await put({ templates: { optimize: "今日完成：\n遇到问题：", weekly: "## 我的周报\n- 【写要点】" } });
@@ -242,7 +255,7 @@ describe("设置中心：参考模板", () => {
     expect(body.templates.optimize.custom).toBeNull();
     expect(body.templates.weekly.custom).toBeNull();
     faux.setResponses([reply(WEEKLY_TEXT)]);
-    await call(genWeekly, "POST", "/x", { date: "2026-11-09", confirm: true });
+    await call(genWeekly, "POST", "/x", { date: "2026-11-09" });
     expect(users.at(-1)).toContain("## 本周完成事项");
   });
 

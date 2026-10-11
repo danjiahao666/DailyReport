@@ -200,13 +200,15 @@ async function main() {
   const wid = wk.json?.id;
   ok("生成周报（周一起始 2027-01-04 ~ 2027-01-10）", wk.status === 200 && wk.json.periodStart === "2027-01-04" && wk.json.periodEnd === "2027-01-10" && wk.json.current.content.includes("## 下周计划建议"), wk.json);
   ok("手动编辑生成新版本", (await req("PUT", `/api/reports/${wid}`, { content: "## 我的周报\n- 手写内容" })).json.current.versionNo === 2);
-  const refuse = await run("POST", "/api/reports/weekly", { date: D3 });
-  ok("重新生成前需确认，避免覆盖已编辑内容", refuse.status === 409 && refuse.json.error.code === "CONFIRM_OVERWRITE_EDITED");
-  const regen = await run("POST", "/api/reports/weekly", { date: D3, confirm: true });
-  ok("确认后生成新版本，已编辑版本仍保留", regen.json.current.versionNo === 3 && regen.json.versions.some((v) => v.versionNo === 2 && v.content.includes("手写内容")));
+  const refine = await run("POST", "/api/reports/weekly", { date: D3 });
+  ok("当前是手动编辑版本时，以它为基准重新优化（不再询问）", refine.status === 200 && refine.json.current.versionNo === 3 && refine.json.current.meta.refinedFrom === 2 && refine.json.current.content.includes("手写内容"), refine.json);
+  const ask = await run("POST", "/api/reports/weekly", { date: D3 });
+  ok("当前是模型生成、历史有手动版本时，需先选择基准", ask.status === 409 && ask.json.error.code === "CHOOSE_BASIS" && ask.json.error.manualVersions.some((v) => v.versionNo === 2), ask.json);
+  const regen = await run("POST", "/api/reports/weekly", { date: D3, basis: "source" });
+  ok("选择不使用手动版本后从日报重新生成，已编辑版本仍保留", regen.json.current.versionNo === 4 && regen.json.versions.some((v) => v.versionNo === 2 && v.content.includes("手写内容")), regen.json);
   const v2 = regen.json.versions.find((v) => v.versionNo === 2);
   const rest = await req("POST", `/api/reports/${wid}/restore`, { versionId: v2.id });
-  ok("可恢复历史版本", rest.json.current.content.includes("手写内容") && rest.json.versions.length === 4);
+  ok("可恢复历史版本", rest.json.current.content.includes("手写内容") && rest.json.versions.length === 5);
 
   console.log("4. 月报（2027-01，含跨月周）");
   const planW = await req("GET", "/api/reports/monthly/plan?month=2027-01&source=weekly");
