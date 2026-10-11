@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api-client";
 import { weekdayName } from "@/lib/dates";
 import type { DailyEntry, DailyVersion, JobView } from "@/lib/types";
+import { CopyMenu } from "./CopyMenu";
 import { Icon } from "./pixel";
-import { Button, CopyButton, ErrorNotice, JobFailed, Modal, Notice, Spinner } from "./ui";
+import { Button, ErrorNotice, JobFailed, Modal, Notice, Spinner } from "./ui";
 
 interface Props {
   date: string;
@@ -185,7 +186,7 @@ export function DailyPanel({ date, job, onJob, onChanged, defaultOptimize = fals
                 {which === "original" ? "回退到原文" : "采用此版本"}
               </Button>
             )}
-            {!isEditing && <CopyButton size="sm" text={content} />}
+            {!isEditing && <CopyMenu size="sm" align="right" markdown={false} content={content} title={`${date} 日报${which === "optimized" ? "（优化稿）" : ""}`} />}
             {!isEditing && (
               <Button size="sm" variant="ghost" onClick={() => startEdit(which)}>
                 编辑
