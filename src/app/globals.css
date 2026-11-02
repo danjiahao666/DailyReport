@@ -453,6 +453,37 @@ html[data-theme="day"] .theme-when-night {
     --tag-fg: var(--color-ink-soft);
   }
 
+  /* 进度条：凹槽 + 按 10% 切分的方块填充；填充色是铺在整条轨道上的 红→黄→绿 渐变（background-size 由组件按进度设置） */
+  .pixel-progress {
+    position: relative;
+    height: 1.1rem;
+    background: var(--color-parchment-lit);
+    border: 2px solid var(--color-ink);
+    box-shadow: inset 2px 2px 0 0 rgb(16 20 28 / 0.18);
+  }
+  .pixel-progress__bar {
+    height: 100%;
+    background-image: linear-gradient(90deg, var(--color-coral) 0%, var(--color-gold) 50%, var(--color-mint) 100%);
+    background-repeat: no-repeat;
+    border-right: 2px solid var(--color-ink);
+  }
+  /* 切分线画在整条轨道上，这样每格都是轨道的 10% */
+  .pixel-progress::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 2px), rgb(16 20 28 / 0.35) calc(10% - 2px), rgb(16 20 28 / 0.35) 10%);
+  }
+  .pixel-progress__bar[data-empty="true"] {
+    border-right: 0;
+  }
+  .pixel-range {
+    width: 100%;
+    accent-color: var(--color-ink);
+    cursor: pointer;
+  }
+
   /* 提示条：左侧一枚方形徽标 + 对话框式的粗描边 */
   .pixel-notice {
     display: flex;

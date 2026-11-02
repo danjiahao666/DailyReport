@@ -239,3 +239,38 @@ export interface JobView {
   startedAt: string;
   finishedAt: string | null;
 }
+
+// ---------- 待办事项 ----------
+
+export type TodoPriority = "low" | "medium" | "high";
+export type TodoStatus = "todo" | "doing" | "done";
+
+export interface TodoBlocker {
+  id: number;
+  content: string;
+  createdAt: string;
+  /** 为空表示仍然卡着 */
+  resolvedAt: string | null;
+}
+
+export interface TodoItem {
+  id: number;
+  title: string;
+  note: string;
+  priority: TodoPriority;
+  status: TodoStatus;
+  /** 完成进度 0~100 */
+  progress: number;
+  /** 开始日期 YYYY-MM-DD */
+  startDate: string | null;
+  /** 期望完成日期 YYYY-MM-DD */
+  dueDate: string | null;
+  /** 实际完成时间（ISO） */
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** 卡点，未解决的在前 */
+  blockers: TodoBlocker[];
+  /** 存在未解决的卡点且尚未完成 */
+  blocked: boolean;
+}

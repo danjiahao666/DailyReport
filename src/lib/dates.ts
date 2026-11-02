@@ -55,6 +55,11 @@ export function addDays(date: DateStr, days: number): DateStr {
   return fromUtc(dt);
 }
 
+/** to 减 from 的天数（to 更晚为正） */
+export function diffDays(from: DateStr, to: DateStr): number {
+  return Math.round((toUtc(to).getTime() - toUtc(from).getTime()) / 86_400_000);
+}
+
 export function weekdayOf(date: DateStr): number {
   return toUtc(date).getUTCDay();
 }

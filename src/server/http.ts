@@ -8,10 +8,10 @@ export function json(data: unknown, status = 200): NextResponse {
   return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-/** 解析路径中的正整数 ID */
-export function parseId(raw: string): number {
+/** 解析路径中的正整数 ID；label 用于错误提示 */
+export function parseId(raw: string, label = "报告"): number {
   const id = Number(raw);
-  if (!Number.isInteger(id) || id <= 0) throw new AppError(400, "INVALID_ID", "报告 ID 不合法");
+  if (!Number.isInteger(id) || id <= 0) throw new AppError(400, "INVALID_ID", `${label} ID 不合法`);
   return id;
 }
 

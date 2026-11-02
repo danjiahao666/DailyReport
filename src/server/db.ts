@@ -77,6 +77,30 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- 待办事项：日期均为 YYYY-MM-DD；progress 为 0~100，状态由进度推导（0 未开始、100 已完成），不单独存储
+CREATE TABLE IF NOT EXISTS todos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low','medium','high')),
+  progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+  start_date TEXT,
+  due_date TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- 待办的卡点：resolved_at 为空表示仍然卡着；待办存在未解决卡点即视为“被卡住”
+CREATE TABLE IF NOT EXISTS todo_blockers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_todo_blockers_todo ON todo_blockers(todo_id);
 `;
 
 /** 本进程标识：任务记录里 boot_id 与之不同且仍为 running，说明执行它的进程已经退出 */

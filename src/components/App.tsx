@@ -8,6 +8,7 @@ import type { CalendarData, JobKind, JobView } from "@/lib/types";
 import { Calendar, type Selection } from "./Calendar";
 import { DailyPanel } from "./DailyPanel";
 import { ReportPanel } from "./ReportPanel";
+import { TodoReminder } from "./TodoReminder";
 import { SiteHeader } from "./pixel";
 import { ErrorNotice } from "./ui";
 
@@ -120,6 +121,9 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
                 ))}
               </select>
             </label>
+            <a href="/todos" className="pixel-button">
+              待办事项
+            </a>
             <a href="/preferences" className="pixel-button">
               设置中心
             </a>
@@ -137,6 +141,7 @@ export function App({ authEnabled }: { authEnabled: boolean }) {
     <main className="page-shell space-y-5 py-6">
       {settingsError && <ErrorNotice error={settingsError} />}
       {error && <ErrorNotice error={error} onRetry={() => void refresh()} busy={loading} />}
+      <TodoReminder today={today} />
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
         <Calendar
