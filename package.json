@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.1.0",
-    "next": "16.4.0",
+    "next": "16.4.3",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
