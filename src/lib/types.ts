@@ -243,7 +243,8 @@ export interface JobView {
 // ---------- 待办事项 ----------
 
 export type TodoPriority = "low" | "medium" | "high";
-export type TodoStatus = "todo" | "doing" | "done";
+/** ongoing 仅用于长期事项：没有进度，也不会“完成” */
+export type TodoStatus = "todo" | "doing" | "done" | "ongoing";
 
 export interface TodoBlocker {
   id: number;
@@ -258,8 +259,10 @@ export interface TodoItem {
   title: string;
   note: string;
   priority: TodoPriority;
+  /** 长期事项：不设进度条和日期，一直挂着跟踪 */
+  longTerm: boolean;
   status: TodoStatus;
-  /** 完成进度 0~100 */
+  /** 完成进度 0~100（长期事项恒为 0，界面不展示） */
   progress: number;
   /** 开始日期 YYYY-MM-DD */
   startDate: string | null;

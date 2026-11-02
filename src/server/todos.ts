@@ -17,6 +17,7 @@ interface TodoRow {
   title: string;
   note: string;
   priority: TodoPriority;
+  is_long_term: number;
   progress: number;
   start_date: string | null;
   due_date: string | null;
@@ -33,8 +34,9 @@ interface BlockerRow {
   resolved_at: string | null;
 }
 
-/** 状态完全由进度推导，避免“进度 100% 却显示进行中”这类不一致 */
-export function statusOf(progress: number): TodoStatus {
+/** 状态由进度推导，避免“进度 100% 却显示进行中”这类不一致；长期事项没有进度，固定为 ongoing */
+export function statusOf(progress: number, longTerm = false): TodoStatus {
+  if (longTerm) return "ongoing";
   if (progress >= 100) return "done";
   return progress > 0 ? "doing" : "todo";
 }
@@ -44,7 +46,8 @@ function toBlocker(r: BlockerRow): TodoBlocker {
 }
 
 function toItem(row: TodoRow, blockers: BlockerRow[]): TodoItem {
-  const status = statusOf(row.progress);
+  const longTerm = row.is_long_term === 1;
+  const status = statusOf(row.progress, longTerm);
   // 未解决的卡点排在前面，其余按创建先后
   const sorted = [...blockers].sort((a, b) => Number(a.resolved_at !== null) - Number(b.resolved_at !== null) || a.id - b.id);
   return {
@@ -52,6 +55,7 @@ function toItem(row: TodoRow, blockers: BlockerRow[]): TodoItem {
     title: row.title,
     note: row.note,
     priority: row.priority,
+    longTerm,
     status,
     progress: row.progress,
     startDate: row.start_date,
@@ -106,6 +110,21 @@ function assertDateOrder(start: string | null, due: string | null): void {
   if (start && due && due < start) throw new AppError(400, "INVALID_DATE_RANGE", "期望完成日期不能早于开始日期");
 }
 
+function validateLongTerm(value: unknown): boolean {
+  if (typeof value !== "boolean") throw new AppError(400, "INVALID_LONG_TERM", "longTerm 必须是布尔值");
+  return value;
+}
+
+/** 长期事项不设进度和日期：请求里显式带了非空值就拒绝，而不是静默丢弃 */
+function assertNoScheduleFields(input: Record<string, unknown>): void {
+  if (input.progress !== undefined && input.progress !== 0) throw new AppError(400, "LONG_TERM_NO_PROGRESS", "长期事项不设置进度");
+  for (const key of ["startDate", "dueDate"] as const) {
+    if (input[key] !== undefined && input[key] !== null && input[key] !== "") {
+      throw new AppError(400, "LONG_TERM_NO_DATES", "长期事项不设置开始和期望完成日期");
+    }
+  }
+}
+
 function validateBlocker(value: unknown): string {
   if (typeof value !== "string") throw new AppError(400, "INVALID_BLOCKER", "卡点必须是文本");
   const text = value.trim();
@@ -153,10 +172,18 @@ export function createTodo(input: Record<string, unknown>): TodoItem {
   const title = validateTitle(input.title);
   const note = input.note === undefined ? "" : validateNote(input.note);
   const priority = input.priority === undefined ? "medium" : validatePriority(input.priority);
-  const startDate = validateOptionalDate(input.startDate ?? null, "开始日期");
-  const dueDate = validateOptionalDate(input.dueDate ?? null, "期望完成日期");
-  assertDateOrder(startDate, dueDate);
-  const progress = input.progress === undefined ? 0 : validateProgress(input.progress);
+  const longTerm = input.longTerm === undefined ? false : validateLongTerm(input.longTerm);
+  let startDate: string | null = null;
+  let dueDate: string | null = null;
+  let progress = 0;
+  if (longTerm) {
+    assertNoScheduleFields(input);
+  } else {
+    startDate = validateOptionalDate(input.startDate ?? null, "开始日期");
+    dueDate = validateOptionalDate(input.dueDate ?? null, "期望完成日期");
+    assertDateOrder(startDate, dueDate);
+    progress = input.progress === undefined ? 0 : validateProgress(input.progress);
+  }
 
   return transaction((db) => {
     const count = db.prepare("SELECT COUNT(*) AS n FROM todos").get() as { n: number };
@@ -164,9 +191,9 @@ export function createTodo(input: Record<string, unknown>): TodoItem {
     const now = nowIso();
     const result = db
       .prepare(
-        "INSERT INTO todos (title, note, priority, progress, start_date, due_date, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO todos (title, note, priority, is_long_term, progress, start_date, due_date, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(title, note, priority, progress, startDate, dueDate, progress === 100 ? now : null, now, now);
+      .run(title, note, priority, longTerm ? 1 : 0, progress, startDate, dueDate, progress === 100 ? now : null, now, now);
     return requireTodo(Number(result.lastInsertRowid));
   });
 }
@@ -174,6 +201,7 @@ export function createTodo(input: Record<string, unknown>): TodoItem {
 /**
  * 局部更新：只修改请求里出现的字段，date 传 null 表示清除。
  * 进度跨过 100% 时同步维护完成时间：达到 100% 记录完成时刻，回落则清除。
+ * 设为长期事项时会清空已有的进度和日期；改回普通事项后从进度 0、无日期重新开始。
  */
 export function updateTodo(id: number, patch: Record<string, unknown>): TodoItem {
   return transaction((db) => {
@@ -183,17 +211,26 @@ export function updateTodo(id: number, patch: Record<string, unknown>): TodoItem
     const title = patch.title === undefined ? row.title : validateTitle(patch.title);
     const note = patch.note === undefined ? row.note : validateNote(patch.note);
     const priority = patch.priority === undefined ? row.priority : validatePriority(patch.priority);
-    const progress = patch.progress === undefined ? row.progress : validateProgress(patch.progress);
-    const startDate = patch.startDate === undefined ? row.start_date : validateOptionalDate(patch.startDate, "开始日期");
-    const dueDate = patch.dueDate === undefined ? row.due_date : validateOptionalDate(patch.dueDate, "期望完成日期");
-    assertDateOrder(startDate, dueDate);
+    const longTerm = patch.longTerm === undefined ? row.is_long_term === 1 : validateLongTerm(patch.longTerm);
+
+    let progress = 0;
+    let startDate: string | null = null;
+    let dueDate: string | null = null;
+    if (longTerm) {
+      assertNoScheduleFields(patch);
+    } else {
+      progress = patch.progress === undefined ? row.progress : validateProgress(patch.progress);
+      startDate = patch.startDate === undefined ? row.start_date : validateOptionalDate(patch.startDate, "开始日期");
+      dueDate = patch.dueDate === undefined ? row.due_date : validateOptionalDate(patch.dueDate, "期望完成日期");
+      assertDateOrder(startDate, dueDate);
+    }
 
     const now = nowIso();
     const completedAt = progress === 100 ? (row.completed_at ?? now) : null;
 
     db.prepare(
-      "UPDATE todos SET title = ?, note = ?, priority = ?, progress = ?, start_date = ?, due_date = ?, completed_at = ?, updated_at = ? WHERE id = ?",
-    ).run(title, note, priority, progress, startDate, dueDate, completedAt, now, id);
+      "UPDATE todos SET title = ?, note = ?, priority = ?, is_long_term = ?, progress = ?, start_date = ?, due_date = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+    ).run(title, note, priority, longTerm ? 1 : 0, progress, startDate, dueDate, completedAt, now, id);
     return requireTodo(id);
   });
 }

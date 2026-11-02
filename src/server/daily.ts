@@ -6,7 +6,9 @@ import { AppError } from "./errors";
 import { clearJob, startJob } from "./jobs";
 import { generateText } from "./llm/client";
 import { optimizationWarnings } from "./llm/guard";
-import { optimizeUser } from "./llm/prompts";
+import { formatTodoContext, optimizeUser } from "./llm/prompts";
+import { listTodos } from "./todos";
+import { todoPromptContext } from "@/lib/todo-view";
 import { getCheckNewNumbers, getLlmTimeoutMs, getMaxTokens, getSystemPrompt, getTemplate } from "./prefs";
 
 export const MAX_DAILY_CHARS = 20_000;
@@ -23,7 +25,13 @@ interface DailyRow {
   optimized_at: string | null;
   created_at: string;
   updated_at: string;
+  /** 当前优化稿生成时给模型的待办素材（来自最新历史版本），由 DAILY_SELECT 联表带出 */
+  optimized_context?: string | null;
 }
+
+/** 日报查询：同时带出当前优化稿对应的待办素材，供“新增数字”核对使用 */
+const DAILY_SELECT =
+  "SELECT e.*, (SELECT v.source_context FROM daily_optimized_versions v WHERE v.date = e.date ORDER BY v.version_no DESC LIMIT 1) AS optimized_context FROM daily_entries e";
 
 function toEntry(row: DailyRow): DailyEntry {
   const useOptimized = row.active === "optimized" && row.optimized !== null;
@@ -38,7 +46,11 @@ function toEntry(row: DailyRow): DailyEntry {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     effective: useOptimized ? (row.optimized as string) : row.original,
-    warnings: row.optimized !== null && row.optimized_stale !== 1 && getCheckNewNumbers() ? optimizationWarnings(row.original, row.optimized) : [],
+    // 待办素材里的数字（如标题中的版本号）是可信来源，和原文一起作为核对基准
+    warnings:
+      row.optimized !== null && row.optimized_stale !== 1 && getCheckNewNumbers()
+        ? optimizationWarnings(row.optimized_context ? `${row.original}\n${row.optimized_context}` : row.original, row.optimized)
+        : [],
   };
 }
 
@@ -58,7 +70,7 @@ export function validateContent(content: unknown, field = "日报内容"): strin
 }
 
 export function getDaily(date: string): DailyEntry | null {
-  const row = getDb().prepare("SELECT * FROM daily_entries WHERE date = ?").get(date) as DailyRow | undefined;
+  const row = getDb().prepare(`${DAILY_SELECT} WHERE e.date = ?`).get(date) as DailyRow | undefined;
   if (!row) return null;
   return { ...toEntry(row), optimizedVersions: listOptimizedVersions(date, row.original) };
 }
@@ -70,6 +82,7 @@ interface VersionRow {
   origin: VersionOrigin;
   model: string | null;
   source_hash: string | null;
+  source_context: string | null;
   restored_from: number | null;
   created_at: string;
 }
@@ -96,14 +109,14 @@ function listOptimizedVersions(date: string, original: string): DailyOptimizedVe
 function appendOptimizedVersion(
   db: DatabaseSync,
   date: string,
-  v: { content: string; origin: VersionOrigin; model: string | null; sourceHash: string | null; restoredFrom?: number },
+  v: { content: string; origin: VersionOrigin; model: string | null; sourceHash: string | null; sourceContext: string | null; restoredFrom?: number },
   now: string,
 ): void {
   const last = db.prepare("SELECT MAX(version_no) AS n FROM daily_optimized_versions WHERE date = ?").get(date) as { n: number | null };
   const versionNo = (last.n ?? 0) + 1;
   db.prepare(
-    "INSERT INTO daily_optimized_versions (date, version_no, content, origin, model, source_hash, restored_from, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(date, versionNo, v.content, v.origin, v.model, v.sourceHash, v.restoredFrom ?? null, now);
+    "INSERT INTO daily_optimized_versions (date, version_no, content, origin, model, source_hash, source_context, restored_from, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(date, versionNo, v.content, v.origin, v.model, v.sourceHash, v.sourceContext, v.restoredFrom ?? null, now);
   db.prepare("DELETE FROM daily_optimized_versions WHERE date = ? AND version_no <= ?").run(date, versionNo - MAX_OPTIMIZED_VERSIONS);
 }
 
@@ -121,7 +134,7 @@ export function requireDaily(date: string): DailyEntry {
 
 export function listDailies(from: string, to: string): DailyEntry[] {
   const rows = getDb()
-    .prepare("SELECT * FROM daily_entries WHERE date >= ? AND date <= ? ORDER BY date")
+    .prepare(`${DAILY_SELECT} WHERE e.date >= ? AND e.date <= ? ORDER BY e.date`)
     .all(from, to) as unknown as DailyRow[];
   return rows.map(toEntry);
 }
@@ -149,7 +162,7 @@ export function submitDaily(date: string, contentInput: unknown, mode?: unknown)
   }
   return transaction((db) => {
     const now = nowIso();
-    const existing = db.prepare("SELECT * FROM daily_entries WHERE date = ?").get(date) as DailyRow | undefined;
+    const existing = db.prepare(`${DAILY_SELECT} WHERE e.date = ?`).get(date) as DailyRow | undefined;
     if (!existing) {
       db.prepare("INSERT INTO daily_entries (date, original, created_at, updated_at) VALUES (?, ?, ?, ?)").run(date, content, now, now);
     } else if (mode === undefined) {
@@ -195,7 +208,14 @@ export function editDaily(date: string, target: unknown, contentInput: unknown):
       appendOptimizedVersion(
         db,
         date,
-        { content, origin: "edited", model: row.optimized_model, sourceHash: latestOptimizedVersion(db, date)?.source_hash ?? null },
+        {
+          content,
+          origin: "edited",
+          model: row.optimized_model,
+          // 手动编辑沿用编辑前那一版对应的原文与待办素材
+          sourceHash: latestOptimizedVersion(db, date)?.source_hash ?? null,
+          sourceContext: latestOptimizedVersion(db, date)?.source_context ?? null,
+        },
         now,
       );
     }
@@ -230,10 +250,12 @@ export function setActiveVersion(date: string, active: unknown): DailyEntry {
 export function startOptimizeDaily(date: string): JobView {
   const before = requireDaily(date);
   return startJob("optimize", date, async () => {
+    // 读取用户当前的待办，用于补全“明日计划”与“遇到问题”；没有待办时素材里写明“当前没有”，模型据此填“无”
+    const todoContext = formatTodoContext(todoPromptContext(listTodos(true)));
     const { text, model } = await generateText({
       task: "optimize",
       system: getSystemPrompt("optimize"),
-      user: optimizeUser(before.original, getTemplate("optimize"), date),
+      user: optimizeUser(before.original, getTemplate("optimize"), date, todoContext),
       maxTokens: getMaxTokens("optimize"),
       timeoutMs: getLlmTimeoutMs(),
     });
@@ -247,7 +269,7 @@ export function startOptimizeDaily(date: string): JobView {
       db.prepare(
         "UPDATE daily_entries SET optimized = ?, optimized_stale = 0, optimized_model = ?, optimized_at = ?, updated_at = ? WHERE date = ?",
       ).run(text, model, now, now, date);
-      appendOptimizedVersion(db, date, { content: text, origin: "generated", model, sourceHash: hashText(row.original) }, now);
+      appendOptimizedVersion(db, date, { content: text, origin: "generated", model, sourceHash: hashText(row.original), sourceContext: todoContext }, now);
     });
   });
 }
@@ -277,7 +299,14 @@ export function restoreOptimizedVersion(date: string, versionId: unknown): Daily
     appendOptimizedVersion(
       db,
       date,
-      { content: target.content, origin: "restored", model: target.model, sourceHash: target.source_hash, restoredFrom: target.version_no },
+      {
+        content: target.content,
+        origin: "restored",
+        model: target.model,
+        sourceHash: target.source_hash,
+        sourceContext: target.source_context,
+        restoredFrom: target.version_no,
+      },
       now,
     );
     return requireDaily(date);

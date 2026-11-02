@@ -134,6 +134,38 @@ describe("待办事项接口", () => {
     expect((await addBlocker(full.id, "多一个")).body.error.code).toBe("TOO_MANY_BLOCKERS");
   });
 
+  it("长期事项：不设进度和日期，不能被标记完成；可以记卡点；可与普通事项互相转换", async () => {
+    const created = await create({ title: "关注线上告警", longTerm: true, priority: "high" });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ longTerm: true, status: "ongoing", progress: 0, startDate: null, dueDate: null, completedAt: null });
+    const id = created.body.id;
+
+    // 显式带进度或日期会被拒绝，而不是悄悄丢弃
+    expect((await create({ title: "x", longTerm: true, progress: 50 })).body.error.code).toBe("LONG_TERM_NO_PROGRESS");
+    expect((await create({ title: "x", longTerm: true, dueDate: "2026-11-30" })).body.error.code).toBe("LONG_TERM_NO_DATES");
+    expect((await patch(id, { progress: 100 })).body.error.code).toBe("LONG_TERM_NO_PROGRESS");
+    expect((await patch(id, { startDate: "2026-11-01" })).body.error.code).toBe("LONG_TERM_NO_DATES");
+    expect((await patch(id, { longTerm: "yes" })).body.error.code).toBe("INVALID_LONG_TERM");
+    // 传 null / 空串 / 0 视为没设置，允许（前端表单就是这样提交的）
+    expect((await patch(id, { dueDate: null, startDate: "", progress: 0, title: "关注线上告警（改）" })).body.title).toBe("关注线上告警（改）");
+
+    // 长期事项也可以记卡点，并算作已卡住
+    expect((await addBlocker(id, "告警规则待评审")).body).toMatchObject({ blocked: true, status: "ongoing" });
+
+    // 普通事项转长期：已有的进度和日期被清空
+    const normal = (await create({ title: "转换", startDate: "2026-11-01", dueDate: "2026-11-09", progress: 60 })).body;
+    expect((await patch(normal.id, { longTerm: true })).body).toMatchObject({
+      longTerm: true,
+      status: "ongoing",
+      progress: 0,
+      startDate: null,
+      dueDate: null,
+    });
+    // 长期转回普通：从未开始、无日期重新开始，之后可以设置
+    expect((await patch(normal.id, { longTerm: false })).body).toMatchObject({ longTerm: false, status: "todo", progress: 0, dueDate: null });
+    expect((await patch(normal.id, { dueDate: "2026-11-20", progress: 10 })).body).toMatchObject({ status: "doing", dueDate: "2026-11-20" });
+  });
+
   it("?open=1 只返回未完成的待办", async () => {
     const open = (await create({ title: "open-未完成", progress: 30 })).body;
     const done = (await create({ title: "open-已完成", progress: 100 })).body;
@@ -160,7 +192,7 @@ describe("待办事项接口", () => {
 });
 
 describe("待办展示规则", () => {
-  const base = { note: "", priority: "medium", startDate: null, completedAt: null, createdAt: "", updatedAt: "", blockers: [], blocked: false } as const;
+  const base = { note: "", priority: "medium", longTerm: false, startDate: null, completedAt: null, createdAt: "", updatedAt: "", blockers: [], blocked: false } as const;
   const todo = (over: Partial<TodoItem> & { id: number }): TodoItem => ({ title: `t${over.id}`, status: "todo", progress: 0, dueDate: null, ...base, ...over }) as TodoItem;
 
   it("到期状态：逾期、今天、临近、较远、未设置、已完成", () => {
@@ -173,6 +205,23 @@ describe("待办展示规则", () => {
     // 已完成的待办即使超过期限也不算逾期；跨月、跨年也要算对
     expect(dueInfo({ dueDate: "2026-10-01", status: "done" }, today).state).toBe("done");
     expect(dueInfo({ dueDate: "2027-01-01", status: "todo" }, "2026-12-30")).toMatchObject({ state: "soon", days: 2 });
+  });
+
+  it("长期事项：排在普通事项之后、已完成之前；不算未完成；首页提醒只在有卡点时才纳入", () => {
+    const blocker = { id: 1, content: "x", createdAt: "", resolvedAt: null };
+    const long = (id: number, over: Partial<TodoItem> = {}) => todo({ id, longTerm: true, status: "ongoing", ...over });
+    const items = [
+      long(1),
+      todo({ id: 2, dueDate: "2026-11-09" }),
+      todo({ id: 3, status: "done", progress: 100, completedAt: "2026-11-01T00:00:00Z" }),
+      long(4, { priority: "high" }),
+      long(5, { blocked: true, blockers: [blocker] }),
+    ];
+    expect(sortTodos(items).map((t) => t.id)).toEqual([2, 4, 5, 1, 3]);
+    expect(countByFilter(items, "2026-11-02")).toMatchObject({ all: 5, open: 1, long: 3, blocked: 1, done: 1 });
+    const s = summarizeOpen(items, "2026-11-02", 5);
+    expect(s).toMatchObject({ total: 2, blocked: 1 });
+    expect(s.top.map((t) => t.id)).toEqual([2, 5]);
   });
 
   it("首页提醒汇总：只统计未完成，分别计逆期、今天到期、已卡住，并取最靠前的几条", () => {
@@ -201,6 +250,6 @@ describe("待办展示规则", () => {
       todo({ id: 7, dueDate: "2026-11-10", blocked: true, blockers: [{ id: 1, content: "x", createdAt: "", resolvedAt: null }] }),
     ];
     expect(sortTodos(items).map((t) => t.id)).toEqual([4, 3, 2, 7, 1, 6, 5]);
-    expect(countByFilter(items, "2026-11-02")).toEqual({ all: 7, open: 5, blocked: 1, overdue: 2, done: 2 });
+    expect(countByFilter(items, "2026-11-02")).toEqual({ all: 7, open: 5, long: 0, blocked: 1, overdue: 2, done: 2 });
   });
 });

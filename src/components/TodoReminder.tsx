@@ -62,7 +62,11 @@ export function TodoReminder({ today }: { today: string }) {
             return (
               <li key={t.id} className="flex flex-wrap items-center gap-1.5">
                 <span className="min-w-0 break-words">· {t.title}</span>
-                <span className="text-xs text-ink-soft">{t.progress}%</span>
+                {t.longTerm ? (
+                  <span className="pixel-tag pixel-tag--violet">长期</span>
+                ) : (
+                  <span className="text-xs text-ink-soft">{t.progress}%</span>
+                )}
                 {due.state !== "none" && due.state !== "done" && <span className="text-xs text-ink-soft">{due.label}</span>}
                 {t.blocked && <span className="pixel-tag pixel-tag--red">卡住</span>}
               </li>

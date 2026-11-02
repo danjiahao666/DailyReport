@@ -28,24 +28,32 @@ export function dueInfo(todo: Pick<TodoItem, "dueDate" | "status">, today: strin
   return { state: left <= DUE_SOON_DAYS ? "soon" : "later", days: left, label: `还剩 ${left} 天` };
 }
 
-export type TodoFilter = "all" | "open" | "blocked" | "overdue" | "done";
+export type TodoFilter = "all" | "open" | "long" | "blocked" | "overdue" | "done";
 
 export const FILTER_LABEL: Record<TodoFilter, string> = {
   all: "全部",
   open: "未完成",
+  long: "长期事项",
   blocked: "已卡住",
   overdue: "已逾期",
   done: "已完成",
 };
 
-export const FILTERS: TodoFilter[] = ["all", "open", "blocked", "overdue", "done"];
+export const FILTERS: TodoFilter[] = ["all", "open", "long", "blocked", "overdue", "done"];
+
+/** 需要推进的待办：未完成的普通事项（长期事项没有“完成”，不算在内） */
+function isActionable(todo: Pick<TodoItem, "status">): boolean {
+  return todo.status === "todo" || todo.status === "doing";
+}
 
 export function matchesFilter(todo: TodoItem, filter: TodoFilter, today: string): boolean {
   switch (filter) {
     case "all":
       return true;
     case "open":
-      return todo.status !== "done";
+      return isActionable(todo);
+    case "long":
+      return todo.longTerm;
     case "blocked":
       return todo.blocked;
     case "overdue":
@@ -56,21 +64,21 @@ export function matchesFilter(todo: TodoItem, filter: TodoFilter, today: string)
 }
 
 export function countByFilter(todos: TodoItem[], today: string): Record<TodoFilter, number> {
-  const counts = { all: 0, open: 0, blocked: 0, overdue: 0, done: 0 } satisfies Record<TodoFilter, number>;
+  const counts = { all: 0, open: 0, long: 0, blocked: 0, overdue: 0, done: 0 } satisfies Record<TodoFilter, number>;
   for (const t of todos) for (const f of FILTERS) if (matchesFilter(t, f, today)) counts[f]++;
   return counts;
 }
 
 /**
- * 展示顺序：未完成的在前，按期望完成日期从近到远（没设日期的排后面），再按优先级、新建先后；
- * 已完成的在最后，最近完成的靠前。
+ * 展示顺序：未完成的普通事项在前，按期望完成日期从近到远（没设日期的排后面），再按优先级、新建先后；
+ * 其次是长期事项（按优先级、新建先后）；已完成的在最后，最近完成的靠前。
  */
 export function sortTodos(todos: TodoItem[]): TodoItem[] {
+  const group = (t: TodoItem) => (t.status === "done" ? 2 : t.longTerm ? 1 : 0);
   return [...todos].sort((a, b) => {
-    const aDone = a.status === "done";
-    const bDone = b.status === "done";
-    if (aDone !== bDone) return aDone ? 1 : -1;
-    if (aDone) return (b.completedAt ?? "").localeCompare(a.completedAt ?? "") || b.id - a.id;
+    if (group(a) !== group(b)) return group(a) - group(b);
+    if (a.status === "done") return (b.completedAt ?? "").localeCompare(a.completedAt ?? "") || b.id - a.id;
+    if (a.longTerm) return PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || b.id - a.id;
     if (a.dueDate !== b.dueDate) {
       if (a.dueDate === null) return 1;
       if (b.dueDate === null) return -1;
@@ -81,7 +89,7 @@ export function sortTodos(todos: TodoItem[]): TodoItem[] {
 }
 
 export interface OpenTodoSummary {
-  /** 未完成的待办数 */
+  /** 需要提醒的待办数：未完成的普通事项，加上有未解决卡点的长期事项 */
   total: number;
   overdue: number;
   dueToday: number;
@@ -90,9 +98,12 @@ export interface OpenTodoSummary {
   top: TodoItem[];
 }
 
-/** 首页提醒用：统计未完成待办的逾期、今天到期、已卡住数量，并取出最靠前的几条 */
+/**
+ * 首页提醒用：统计逾期、今天到期、已卡住数量，并取出最靠前的几条。
+ * 长期事项没有期限，平时不提醒；只有存在未解决卡点时才纳入，避免一直挂着的事项反复打扰。
+ */
 export function summarizeOpen(todos: TodoItem[], today: string, topN = 3): OpenTodoSummary {
-  const open = sortTodos(todos.filter((t) => t.status !== "done"));
+  const open = sortTodos(todos.filter((t) => isActionable(t) || (t.longTerm && t.blocked)));
   let overdue = 0;
   let dueToday = 0;
   let blocked = 0;
@@ -103,4 +114,37 @@ export function summarizeOpen(todos: TodoItem[], today: string, topN = 3): OpenT
     if (t.blocked) blocked++;
   }
   return { total: open.length, overdue, dueToday, blocked, top: open.slice(0, topN) };
+}
+
+/** 喂给大模型的待办条数上限（计划、问题各自计数），避免清单很长时撑爆提示词 */
+export const PROMPT_MAX_ITEMS = 15;
+
+export interface TodoPromptContext {
+  /** 明日计划候选：未完成的普通待办（长期事项不列入），期限近的在前 */
+  plans: string[];
+  /** 遇到问题候选：所有未解决的卡点，格式“待办标题：卡点内容” */
+  problems: string[];
+  /** 超出条数上限、没有列出的数量 */
+  morePlans: number;
+  moreProblems: number;
+}
+
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/**
+ * 日报优化时给大模型的待办素材：只给标题和卡点原文，不带进度与日期，
+ * 避免模型把精确数字写进日报（也就不会被“新增数字”核对误伤）。
+ */
+export function todoPromptContext(todos: TodoItem[]): TodoPromptContext {
+  const sorted = sortTodos(todos);
+  const plans = sorted.filter(isActionable).map((t) => oneLine(t.title));
+  const problems = sorted
+    .filter((t) => t.blocked)
+    .flatMap((t) => t.blockers.filter((b) => b.resolvedAt === null).map((b) => `${oneLine(t.title)}：${oneLine(b.content)}`));
+  return {
+    plans: plans.slice(0, PROMPT_MAX_ITEMS),
+    problems: problems.slice(0, PROMPT_MAX_ITEMS),
+    morePlans: Math.max(0, plans.length - PROMPT_MAX_ITEMS),
+    moreProblems: Math.max(0, problems.length - PROMPT_MAX_ITEMS),
+  };
 }

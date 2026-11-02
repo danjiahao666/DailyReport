@@ -31,13 +31,22 @@ interface FormValues {
   priority: TodoPriority;
   startDate: string;
   dueDate: string;
+  /** 长期事项：不设进度条和日期 */
+  longTerm: boolean;
 }
 
-const EMPTY_FORM: FormValues = { title: "", note: "", priority: "medium", startDate: "", dueDate: "" };
+const EMPTY_FORM: FormValues = { title: "", note: "", priority: "medium", startDate: "", dueDate: "", longTerm: false };
 
-/** 把表单值转成接口请求体：空日期传 null（编辑时用于清除） */
+/** 把表单值转成接口请求体：空日期传 null（编辑时用于清除）；长期事项一律不带日期 */
 function toPayload(v: FormValues) {
-  return { title: v.title, note: v.note, priority: v.priority, startDate: v.startDate || null, dueDate: v.dueDate || null };
+  return {
+    title: v.title,
+    note: v.note,
+    priority: v.priority,
+    longTerm: v.longTerm,
+    startDate: v.longTerm ? null : v.startDate || null,
+    dueDate: v.longTerm ? null : v.dueDate || null,
+  };
 }
 
 /** 新建与编辑共用的表单 */
@@ -57,7 +66,7 @@ function TodoForm({
   const [error, setError] = useState<ApiError | null>(null);
 
   const set = <K extends keyof FormValues>(key: K, value: FormValues[K]) => setValues((v) => ({ ...v, [key]: value }));
-  const dateOrderBad = values.startDate !== "" && values.dueDate !== "" && values.dueDate < values.startDate;
+  const dateOrderBad = !values.longTerm && values.startDate !== "" && values.dueDate !== "" && values.dueDate < values.startDate;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -87,21 +96,30 @@ function TodoForm({
           required
         />
       </label>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={values.longTerm} onChange={(e) => set("longTerm", e.target.checked)} className="pixel-check" />
+        <span className="font-semibold">长期事项</span>
+        <span className="text-xs text-ink-soft">不设进度条和日期，一直挂着跟踪，也可以记卡点</span>
+      </label>
       <div className="flex flex-wrap gap-3">
-        <label className="space-y-1">
-          <span className="block text-sm font-semibold">开始日期</span>
-          <input type="date" value={values.startDate} onChange={(e) => set("startDate", e.target.value)} className="pixel-field" />
-        </label>
-        <label className="space-y-1">
-          <span className="block text-sm font-semibold">期望完成日期</span>
-          <input
-            type="date"
-            value={values.dueDate}
-            min={values.startDate || undefined}
-            onChange={(e) => set("dueDate", e.target.value)}
-            className="pixel-field"
-          />
-        </label>
+        {!values.longTerm && (
+          <>
+            <label className="space-y-1">
+              <span className="block text-sm font-semibold">开始日期</span>
+              <input type="date" value={values.startDate} onChange={(e) => set("startDate", e.target.value)} className="pixel-field" />
+            </label>
+            <label className="space-y-1">
+              <span className="block text-sm font-semibold">期望完成日期</span>
+              <input
+                type="date"
+                value={values.dueDate}
+                min={values.startDate || undefined}
+                onChange={(e) => set("dueDate", e.target.value)}
+                className="pixel-field"
+              />
+            </label>
+          </>
+        )}
         <label className="space-y-1">
           <span className="block text-sm font-semibold">优先级</span>
           <select value={values.priority} onChange={(e) => set("priority", e.target.value as TodoPriority)} className="pixel-field">
@@ -323,7 +341,7 @@ function TodoCard({
     return (
       <li className="pixel-card p-3">
         <TodoForm
-          initial={{ title: todo.title, note: todo.note, priority: todo.priority, startDate: todo.startDate ?? "", dueDate: todo.dueDate ?? "" }}
+          initial={{ title: todo.title, note: todo.note, priority: todo.priority, startDate: todo.startDate ?? "", dueDate: todo.dueDate ?? "", longTerm: todo.longTerm }}
           submitLabel="保存"
           onSubmit={async (v) => {
             onChanged(await api<TodoItem>("PATCH", `/api/todos/${todo.id}`, toPayload(v)));
@@ -342,7 +360,9 @@ function TodoCard({
           <h3 className={`break-words text-base font-semibold ${done ? "text-muted line-through" : ""}`}>{todo.title}</h3>
           <div className="flex flex-wrap items-center gap-1.5">
             <span className={`pixel-tag ${PRIORITY_TAG[todo.priority]}`}>优先级 {PRIORITY_LABEL[todo.priority]}</span>
-            {done ? (
+            {todo.longTerm ? (
+              <span className="pixel-tag pixel-tag--violet">长期事项</span>
+            ) : done ? (
               <span className="pixel-tag pixel-tag--green">已完成</span>
             ) : (
               <span className={`pixel-tag ${todo.status === "doing" ? "pixel-tag--blue" : "pixel-tag--plain"}`}>
@@ -356,7 +376,7 @@ function TodoCard({
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap gap-1.5">
-          {done ? (
+          {todo.longTerm ? null : done ? (
             <Button size="sm" disabled={busy} onClick={() => patch({ progress: REOPEN_PROGRESS })}>
               重新打开
             </Button>
@@ -385,20 +405,25 @@ function TodoCard({
         </div>
       </div>
 
-      <p className="text-xs text-ink-soft">
-        开始：{todo.startDate ?? "未设置"} · 期望完成：{todo.dueDate ?? "未设置"}
-        {done && todo.completedAt ? ` · 完成于：${fmtTime(todo.completedAt)}` : ""}
-      </p>
+      {/* 长期事项不设日期和进度条 */}
+      {!todo.longTerm && (
+        <>
+          <p className="text-xs text-ink-soft">
+            开始：{todo.startDate ?? "未设置"} · 期望完成：{todo.dueDate ?? "未设置"}
+            {done && todo.completedAt ? ` · 完成于：${fmtTime(todo.completedAt)}` : ""}
+          </p>
 
-      <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          <div className="min-w-0 flex-1">
-            <ProgressBar value={todo.progress} />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <ProgressBar value={todo.progress} />
+              </div>
+              <span className="w-10 shrink-0 text-right font-pixel text-sm">{todo.progress}%</span>
+            </div>
+            <ProgressControl progress={todo.progress} onCommit={(value) => patch({ progress: value })} />
           </div>
-          <span className="w-10 shrink-0 text-right font-pixel text-sm">{todo.progress}%</span>
-        </div>
-        <ProgressControl progress={todo.progress} onCommit={(value) => patch({ progress: value })} />
-      </div>
+        </>
+      )}
 
       {todo.note && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{todo.note}</p>}
 
@@ -462,8 +487,8 @@ export function Todos() {
               onSubmit={async (v) => {
                 const created = await api<TodoItem>("POST", "/api/todos", toPayload(v));
                 setTodos((list) => [created, ...(list ?? [])]);
-                // 新待办是未完成、无卡点的；当前筛选看不到它时切到“未完成”，避免用户以为没加上
-                if (filter !== "all" && filter !== "open") setFilter("open");
+                // 当前筛选看不到新待办时，切到它所在的分类，避免用户以为没加上
+                if (!matchesFilter(created, filter, today)) setFilter(created.longTerm ? "long" : "open");
               }}
             />
           </div>

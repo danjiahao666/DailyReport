@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS daily_optimized_versions (
   model TEXT,
   -- 生成该版本时原文的哈希；NULL 表示无法确认它对应哪一版原文，一律按“已过期”处理
   source_hash TEXT,
+  -- 生成该版本时给模型的待办事项素材；“新增数字”核对要把它算作可信来源，NULL 表示没有使用待办
+  source_context TEXT,
   restored_from INTEGER,
   created_at TEXT NOT NULL,
   UNIQUE (date, version_no)
@@ -84,6 +86,8 @@ CREATE TABLE IF NOT EXISTS todos (
   title TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '',
   priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low','medium','high')),
+  -- 长期事项：没有进度和日期，不参与“完成”流转，由服务端保证 progress=0、日期为空
+  is_long_term INTEGER NOT NULL DEFAULT 0 CHECK (is_long_term IN (0,1)),
   progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
   start_date TEXT,
   due_date TEXT,
@@ -127,6 +131,7 @@ export function getDb(): DatabaseSync {
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec(SCHEMA);
+  migrate(db);
   backfillOptimizedVersions(db);
   // 上一个进程中断的任务不会再有人更新状态，标记为失败，避免页面永远显示“进行中”
   db.prepare(
@@ -135,6 +140,21 @@ export function getDb(): DatabaseSync {
   holder.db = db;
   holder.file = file;
   return db;
+}
+
+/**
+ * 给升级前已存在的表补列：CREATE TABLE IF NOT EXISTS 不会修改旧表。
+ * 幂等，每次打开数据库都会检查；旧版本应用读写新表时不受额外列影响。
+ */
+function migrate(db: DatabaseSync): void {
+  const todoColumns = db.prepare("PRAGMA table_info(todos)").all() as unknown as { name: string }[];
+  if (!todoColumns.some((c) => c.name === "is_long_term")) {
+    db.exec("ALTER TABLE todos ADD COLUMN is_long_term INTEGER NOT NULL DEFAULT 0 CHECK (is_long_term IN (0,1))");
+  }
+  const versionColumns = db.prepare("PRAGMA table_info(daily_optimized_versions)").all() as unknown as { name: string }[];
+  if (!versionColumns.some((c) => c.name === "source_context")) {
+    db.exec("ALTER TABLE daily_optimized_versions ADD COLUMN source_context TEXT");
+  }
 }
 
 export function hashText(text: string): string {

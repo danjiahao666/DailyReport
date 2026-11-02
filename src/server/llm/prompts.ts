@@ -1,4 +1,5 @@
 import { weekdayName } from "@/lib/dates";
+import type { TodoPromptContext } from "@/lib/todo-view";
 
 /** 提示词集中管理。所有输出要求：中文、简洁、专业，不编造事实。 */
 
@@ -47,14 +48,39 @@ export function applyTemplateDate(template: string, date: string): string {
   );
 }
 
-export function optimizeUser(original: string, template = "", date = ""): string {
+/** 把待办素材排成给模型看的文本；同一段文本也会随优化稿版本保存，供“新增数字”核对使用 */
+export function formatTodoContext(ctx: TodoPromptContext): string {
+  const list = (items: string[], more: number, empty: string) =>
+    items.length === 0 ? `（${empty}）` : [...items.map((i) => `- ${i}`), ...(more > 0 ? [`（另有 ${more} 条未列出，不必写入日报）`] : [])].join("\n");
+  return `未完成的待办：\n${list(ctx.plans, ctx.morePlans, "当前没有未完成的待办事项")}\n\n未解决的卡点：\n${list(ctx.problems, ctx.moreProblems, "当前没有未解决的卡点")}`;
+}
+
+/**
+ * 待办事项补充规则。写在用户消息里而不是系统提示词里：用户自定义过系统提示词时，这段规则依然生效。
+ * 即使没有任何待办也要带上，这样“明日计划”“遇到问题”才会按约定写“无”。
+ */
+function todoBlock(todoContext: string): string {
+  return `
+
+下面的 <待办事项> 是用户当前的待办清单，用来补全日报里的“明日计划”和“遇到问题”。本段规则优先于上面“不得补充原文没有的计划、问题”的限制：
+1. “明日计划”类小节（如“明日计划”“下一步计划”）：把“未完成的待办”逐条整理成计划，与日报原文里已有的计划合并，含义重复的只保留一条；原文和待办都没有计划内容时写“无”。
+2. “遇到问题”类小节（如“遇到问题”“遇到困难”“问题与风险”）：把“未解决的卡点”整理进去，写明所属待办与卡点内容，与原文里已有的问题合并去重；原文写“无”而存在卡点时，以卡点为准；原文和卡点都没有问题内容时写“无”。
+3. 这两类小节只要出现在输出模板或日报原文里，就必须保留，没有内容时写“无”，不要省略；模板和原文里都没有这类小节时，忽略待办事项，不要新增小节。
+4. 待办事项只用于这两类小节，不要写入“完成情况”等其他小节，也不要为它们补充清单之外的细节（进度、日期、原因）。
+<待办事项>
+${todoContext}
+</待办事项>`;
+}
+
+/** todoContext 为 null 表示不使用待办事项；传入（包括“当前没有待办”的文本）则附上待办补充规则 */
+export function optimizeUser(original: string, template = "", date = "", todoContext: string | null = null): string {
   const tip = template.trim() === "" ? "" : "，并参照末尾的输出模板组织结构";
   const dateLine = date === "" ? "" : `\n日报日期：${date}（输出中涉及日期时必须以此为准，模板里的示例日期不是真实日期）`;
   return `请优化下面这条日报${tip}，只输出优化后的日报正文。${dateLine}
 
 <日报原文>
 ${original}
-</日报原文>${templateBlock(date === "" ? template : applyTemplateDate(template, date))}`;
+</日报原文>${todoContext === null ? "" : todoBlock(todoContext)}${templateBlock(date === "" ? template : applyTemplateDate(template, date))}`;
 }
 
 export const WEEKLY_SYSTEM = `你是一名严谨的中文职场写作助手，负责把一周内的日报汇总为周报。
