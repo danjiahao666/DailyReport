@@ -46,6 +46,14 @@ function isActionable(todo: Pick<TodoItem, "status">): boolean {
   return todo.status === "todo" || todo.status === "doing";
 }
 
+/**
+ * 进入「明日计划」的待办：未完成的普通事项，加上长期事项。
+ * 长期事项没有进度也没有完成状态，但一直在推进，标题同样要出现在明日计划里。
+ */
+function isPendingPlan(todo: Pick<TodoItem, "status">): boolean {
+  return isActionable(todo) || todo.status === "ongoing";
+}
+
 export function matchesFilter(todo: TodoItem, filter: TodoFilter, today: string): boolean {
   switch (filter) {
     case "all":
@@ -120,7 +128,7 @@ export function summarizeOpen(todos: TodoItem[], today: string, topN = 3): OpenT
 export const PROMPT_MAX_ITEMS = 15;
 
 export interface TodoPromptContext {
-  /** 明日计划候选：未完成的普通待办（长期事项不列入），期限近的在前 */
+  /** 明日计划候选：未完成的普通待办与长期事项，期限近的在前 */
   plans: string[];
   /** 遇到问题候选：所有未解决的卡点，格式“待办标题：卡点内容” */
   problems: string[];
@@ -137,7 +145,7 @@ const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
  */
 export function todoPromptContext(todos: TodoItem[]): TodoPromptContext {
   const sorted = sortTodos(todos);
-  const plans = sorted.filter(isActionable).map((t) => oneLine(t.title));
+  const plans = sorted.filter(isPendingPlan).map((t) => oneLine(t.title));
   const problems = sorted
     .filter((t) => t.blocked)
     .flatMap((t) => t.blockers.filter((b) => b.resolvedAt === null).map((b) => `${oneLine(t.title)}：${oneLine(b.content)}`));

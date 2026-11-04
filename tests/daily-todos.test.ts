@@ -48,7 +48,7 @@ describe("日报优化读取待办事项", () => {
     expect(prompts[0]).toContain("没有内容时写“无”");
   });
 
-  it("把未完成待办作为计划素材、未解决卡点作为问题素材；已完成、已解决的不带；不带进度和日期", async () => {
+  it("把未完成待办和长期事项作为计划素材、未解决卡点作为问题素材；已完成、已解决的不带；不带进度和日期", async () => {
     createTodo({ title: "推进指标平台开发", dueDate: "2026-11-09", progress: 35 });
     const kb = createTodo({ title: "修复知识库 bug", startDate: "2026-11-01" });
     createTodo({ title: "已经做完的事", progress: 100 });
@@ -65,8 +65,8 @@ describe("日报优化读取待办事项", () => {
     expect(data).toContain("- 推进指标平台开发");
     expect(data).toContain("- 修复知识库 bug");
     expect(data).not.toContain("已经做完的事");
-    // 长期事项不列入计划，但它的卡点要进“遇到问题”
-    expect(data).not.toContain("- 关注线上告警");
+    // 长期事项也列入计划，它的卡点进“遇到问题”
+    expect(data).toContain("- 关注线上告警");
     expect(data).toContain("- 修复知识库 bug：等待测试环境");
     expect(data).toContain("- 长期事项的卡点：告警规则待评审");
     expect(data).not.toContain("已经解决的问题");
@@ -105,5 +105,13 @@ describe("待办素材的整理", () => {
   it("不使用待办（null）时提示词里没有待办段落，保持原有行为", () => {
     expect(optimizeUser("原文", "", "2026-11-02")).not.toContain("待办事项");
     expect(optimizeUser("原文", "", "2026-11-02", formatTodoContext(todoPromptContext([])))).toContain("<待办事项>");
+  });
+
+  it("长期事项的标题进入计划素材，普通未完成事项在前", () => {
+    const normal = todo({ id: 1, title: "普通待办", dueDate: "2026-11-09" });
+    const long = todo({ id: 2, title: "长期事项", status: "ongoing" });
+    const done = todo({ id: 3, title: "已完成的事", status: "done", progress: 100 });
+    const ctx = todoPromptContext([long, done, normal]);
+    expect(ctx.plans).toEqual(["普通待办", "长期事项"]);
   });
 });
