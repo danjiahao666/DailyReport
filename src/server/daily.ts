@@ -46,10 +46,14 @@ function toEntry(row: DailyRow): DailyEntry {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     effective: useOptimized ? (row.optimized as string) : row.original,
-    // 待办素材里的数字（如标题中的版本号）是可信来源，和原文一起作为核对基准
+    // 待办素材里的数字（如标题中的版本号）是可信来源，和原文一起作为核对基准；日报日期同理
     warnings:
       row.optimized !== null && row.optimized_stale !== 1 && getCheckNewNumbers()
-        ? optimizationWarnings(row.optimized_context ? `${row.original}\n${row.optimized_context}` : row.original, row.optimized)
+        ? optimizationWarnings(
+            row.optimized_context ? `${row.original}\n${row.optimized_context}` : row.original,
+            row.optimized,
+            [row.date],
+          )
         : [],
   };
 }
