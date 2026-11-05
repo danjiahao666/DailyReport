@@ -283,6 +283,20 @@ describe("待办展示规则", () => {
     expect(s).toMatchObject({ total: 4, blocked: 1 });
     // 长期事项按优先级、新建先后排在普通事项之后
     expect(s.top.map((t) => t.id)).toEqual([2, 4, 5, 1]);
+    expect(s.items.map((t) => t.id)).toEqual([2, 4, 5, 1]);
+  });
+
+  it("首页提醒：默认只显示前三条，items 里保留全部，展开后可以看到", () => {
+    const items = [
+      ...Array.from({ length: 5 }, (_, i) => todo({ id: i + 1, dueDate: `2026-11-0${i + 1}` })),
+      todo({ id: 9, longTerm: true, status: "ongoing" }),
+    ];
+    const s = summarizeOpen(items, "2026-11-02", 3);
+    expect(s.total).toBe(6);
+    expect(s.top.map((t) => t.id)).toEqual([1, 2, 3]);
+    // 展开后显示的是 items，条数与总数一致
+    expect(s.items.map((t) => t.id)).toEqual([1, 2, 3, 4, 5, 9]);
+    expect(s.items).toHaveLength(s.total);
   });
 
   it("首页提醒：已暂停和已完成的长期事项不再提醒", () => {
@@ -304,16 +318,6 @@ describe("待办展示规则", () => {
       todo({ id: 4 }),
     ];
     expect(sortTodos(items).map((t) => t.id)).toEqual([4, 3, 1, 2]);
-  });
-
-  it("首页提醒：长期事项不会被普通待办挤出列表", () => {
-    const items = [
-      ...Array.from({ length: 5 }, (_, i) => todo({ id: i + 1, dueDate: `2026-11-0${i + 1}` })),
-      todo({ id: 9, longTerm: true, status: "ongoing" }),
-    ];
-    const s = summarizeOpen(items, "2026-11-02", 3);
-    expect(s.total).toBe(6);
-    expect(s.top.map((t) => t.id)).toEqual([1, 2, 3, 9]);
   });
 
   it("首页提醒汇总：只统计未完成，分别计逆期、今天到期、已卡住，并取最靠前的几条", () => {

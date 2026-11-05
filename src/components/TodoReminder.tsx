@@ -8,11 +8,13 @@ import { ErrorNotice, Notice } from "./ui";
 
 /**
  * 首页的待办提醒：有未完成的待办或长期事项时显示数量、逾期 / 今天到期 / 已卡住的统计和最靠前的几条，
- * 没有未完成待办时不占位。逾期、今天到期或已卡住时用黄色提示，否则用蓝色。
+ * 没有未完成待办时不占位。超过三条时先折叠，点“展开全部”可以看到所有待提醒的待办。
+ * 逾期、今天到期或已卡住时用黄色提示，否则用蓝色。
  */
 export function TodoReminder({ today }: { today: string }) {
   const [todos, setTodos] = useState<TodoItem[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -42,7 +44,8 @@ export function TodoReminder({ today }: { today: string }) {
   if (!summary || summary.total === 0) return null;
 
   const urgent = summary.overdue + summary.dueToday + summary.blocked > 0;
-  const more = summary.total - summary.top.length;
+  const collapsible = summary.items.length > summary.top.length;
+  const visible = expanded ? summary.items : summary.top;
 
   return (
     <Notice tone={urgent ? "warn" : "info"}>
@@ -57,7 +60,7 @@ export function TodoReminder({ today }: { today: string }) {
           </a>
         </p>
         <ul className="space-y-0.5">
-          {summary.top.map((t) => {
+          {visible.map((t) => {
             const due = dueInfo(t, today);
             return (
               <li key={t.id} className="flex flex-wrap items-center gap-1.5">
@@ -73,7 +76,13 @@ export function TodoReminder({ today }: { today: string }) {
             );
           })}
         </ul>
-        {more > 0 && <p className="text-xs text-ink-soft">还有 {more} 条未显示</p>}
+        {collapsible && (
+          <p className="text-xs">
+            <button type="button" onClick={() => setExpanded((v) => !v)} className="underline">
+              {expanded ? "收起 ▲" : `展开全部 ${summary.items.length} 条 ▼`}
+            </button>
+          </p>
+        )}
       </div>
     </Notice>
   );

@@ -107,7 +107,9 @@ export interface OpenTodoSummary {
   overdue: number;
   dueToday: number;
   blocked: number;
-  /** 最该先看的几条：按展示顺序（期限最近的在前） */
+  /** 全部待提醒的待办，按展示顺序 */
+  items: TodoItem[];
+  /** 默认折叠显示的前几条 */
   top: TodoItem[];
 }
 
@@ -118,17 +120,24 @@ export interface OpenTodoSummary {
 export function summarizeOpen(todos: TodoItem[], today: string, topN = 3): OpenTodoSummary {
   const actionable = sortTodos(todos.filter(isActionable));
   const longTerm = sortTodos(todos.filter((t) => t.longTerm && t.status === "ongoing"));
-  const open = [...actionable, ...longTerm];
+  const items = [...actionable, ...longTerm];
   let overdue = 0;
   let dueToday = 0;
   let blocked = 0;
-  for (const t of open) {
+  for (const t of items) {
     const state = dueInfo(t, today).state;
     if (state === "overdue") overdue++;
     else if (state === "today") dueToday++;
     if (t.blocked) blocked++;
   }
-  return { total: open.length, overdue, dueToday, blocked, top: [...actionable.slice(0, topN), ...longTerm.slice(0, topN)] };
+  return {
+    total: items.length,
+    overdue,
+    dueToday,
+    blocked,
+    items,
+    top: items.slice(0, topN),
+  };
 }
 
 /** 喂给大模型的待办条数上限（计划、问题各自计数），避免清单很长时撑爆提示词 */
