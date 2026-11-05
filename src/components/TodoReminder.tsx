@@ -7,7 +7,7 @@ import type { TodoItem } from "@/lib/types";
 import { ErrorNotice, Notice } from "./ui";
 
 /**
- * 首页的待办提醒：有未完成的待办时显示数量、逾期 / 今天到期 / 已卡住的统计和最靠前的几条，
+ * 首页的待办提醒：有未完成的待办或长期事项时显示数量、逾期 / 今天到期 / 已卡住的统计和最靠前的几条，
  * 没有未完成待办时不占位。逾期、今天到期或已卡住时用黄色提示，否则用蓝色。
  */
 export function TodoReminder({ today }: { today: string }) {

@@ -97,7 +97,7 @@ export function sortTodos(todos: TodoItem[]): TodoItem[] {
 }
 
 export interface OpenTodoSummary {
-  /** 需要提醒的待办数：未完成的普通事项，加上有未解决卡点的长期事项 */
+  /** 需要提醒的待办数：未完成的普通事项，加上长期事项 */
   total: number;
   overdue: number;
   dueToday: number;
@@ -108,10 +108,12 @@ export interface OpenTodoSummary {
 
 /**
  * 首页提醒用：统计逾期、今天到期、已卡住数量，并取出最靠前的几条。
- * 长期事项没有期限，平时不提醒；只有存在未解决卡点时才纳入，避免一直挂着的事项反复打扰。
+ * 长期事项没有期限，一律纳入提醒；但单独占位，不能被普通待办挤出列表。
  */
 export function summarizeOpen(todos: TodoItem[], today: string, topN = 3): OpenTodoSummary {
-  const open = sortTodos(todos.filter((t) => isActionable(t) || (t.longTerm && t.blocked)));
+  const actionable = sortTodos(todos.filter(isActionable));
+  const longTerm = sortTodos(todos.filter((t) => t.longTerm));
+  const open = [...actionable, ...longTerm];
   let overdue = 0;
   let dueToday = 0;
   let blocked = 0;
@@ -121,7 +123,7 @@ export function summarizeOpen(todos: TodoItem[], today: string, topN = 3): OpenT
     else if (state === "today") dueToday++;
     if (t.blocked) blocked++;
   }
-  return { total: open.length, overdue, dueToday, blocked, top: open.slice(0, topN) };
+  return { total: open.length, overdue, dueToday, blocked, top: [...actionable.slice(0, topN), ...longTerm.slice(0, topN)] };
 }
 
 /** 喂给大模型的待办条数上限（计划、问题各自计数），避免清单很长时撑爆提示词 */
