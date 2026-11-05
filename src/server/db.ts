@@ -86,8 +86,9 @@ CREATE TABLE IF NOT EXISTS todos (
   title TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '',
   priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low','medium','high')),
-  -- 长期事项：没有进度和日期，不参与“完成”流转，由服务端保证 progress=0、日期为空
+  -- 长期事项：没有进度和日期，进度恒为 0；状态单独存在 long_term_status（进行中 / 已暂停 / 已完成）
   is_long_term INTEGER NOT NULL DEFAULT 0 CHECK (is_long_term IN (0,1)),
+  long_term_status TEXT NOT NULL DEFAULT 'ongoing' CHECK (long_term_status IN ('ongoing','paused','done')),
   progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
   start_date TEXT,
   due_date TEXT,
@@ -150,6 +151,9 @@ function migrate(db: DatabaseSync): void {
   const todoColumns = db.prepare("PRAGMA table_info(todos)").all() as unknown as { name: string }[];
   if (!todoColumns.some((c) => c.name === "is_long_term")) {
     db.exec("ALTER TABLE todos ADD COLUMN is_long_term INTEGER NOT NULL DEFAULT 0 CHECK (is_long_term IN (0,1))");
+  }
+  if (!todoColumns.some((c) => c.name === "long_term_status")) {
+    db.exec("ALTER TABLE todos ADD COLUMN long_term_status TEXT NOT NULL DEFAULT 'ongoing' CHECK (long_term_status IN ('ongoing','paused','done'))");
   }
   const versionColumns = db.prepare("PRAGMA table_info(daily_optimized_versions)").all() as unknown as { name: string }[];
   if (!versionColumns.some((c) => c.name === "source_context")) {

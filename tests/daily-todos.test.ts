@@ -88,7 +88,7 @@ describe("日报优化读取待办事项", () => {
 });
 
 describe("待办素材的整理", () => {
-  const base = { note: "", priority: "medium", startDate: null, completedAt: null, createdAt: "", updatedAt: "" } as const;
+  const base = { note: "", priority: "medium", longTermStatus: "ongoing", startDate: null, completedAt: null, createdAt: "", updatedAt: "" } as const;
   const todo = (over: Partial<TodoItem> & { id: number }): TodoItem =>
     ({ title: `t${over.id}`, longTerm: false, status: "todo", progress: 0, dueDate: null, blockers: [], blocked: false, ...base, ...over }) as TodoItem;
 
@@ -113,5 +113,15 @@ describe("待办素材的整理", () => {
     const done = todo({ id: 3, title: "已完成的事", status: "done", progress: 100 });
     const ctx = todoPromptContext([long, done, normal]);
     expect(ctx.plans).toEqual(["普通待办", "长期事项"]);
+  });
+
+  it("已暂停和已完成的长期事项不进计划素材，也不带卡点", () => {
+    const ctx = todoPromptContext([
+      todo({ id: 1, title: "进行中的长期事项", longTerm: true, status: "ongoing" }),
+      todo({ id: 2, title: "已暂停的长期事项", longTerm: true, status: "paused", blocked: false }),
+      todo({ id: 3, title: "已完成的长期事项", longTerm: true, status: "done", blocked: false }),
+    ]);
+    expect(ctx.plans).toEqual(["进行中的长期事项"]);
+    expect(ctx.problems).toEqual([]);
   });
 });

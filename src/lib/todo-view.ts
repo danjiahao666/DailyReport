@@ -19,8 +19,10 @@ export interface DueInfo {
 }
 
 /** 期望完成日期相对今天的状态；已完成的待办不再提示逾期 */
-export function dueInfo(todo: Pick<TodoItem, "dueDate" | "status">, today: string): DueInfo {
+export function dueInfo(todo: Pick<TodoItem, "dueDate" | "status"> & { longTerm?: boolean }, today: string): DueInfo {
   if (todo.status === "done") return { state: "done", days: 0, label: "" };
+  // 长期事项没有期限，不参与逾期和到期统计
+  if (todo.longTerm) return { state: "none", days: 0, label: "" };
   if (!todo.dueDate) return { state: "none", days: 0, label: "未设置期望完成日期" };
   const left = diffDays(today, todo.dueDate);
   if (left < 0) return { state: "overdue", days: -left, label: `已逾期 ${-left} 天` };
@@ -47,8 +49,8 @@ function isActionable(todo: Pick<TodoItem, "status">): boolean {
 }
 
 /**
- * 进入「明日计划」的待办：未完成的普通事项，加上长期事项。
- * 长期事项没有进度也没有完成状态，但一直在推进，标题同样要出现在明日计划里。
+ * 进入「明日计划」的待办：未完成的普通事项，加上进行中的长期事项。
+ * 已暂停和已完成的长期事项不再占用注意力，不进日报。
  */
 function isPendingPlan(todo: Pick<TodoItem, "status">): boolean {
   return isActionable(todo) || todo.status === "ongoing";
@@ -79,14 +81,17 @@ export function countByFilter(todos: TodoItem[], today: string): Record<TodoFilt
 
 /**
  * 展示顺序：未完成的普通事项在前，按期望完成日期从近到远（没设日期的排后面），再按优先级、新建先后；
- * 其次是长期事项（按优先级、新建先后）；已完成的在最后，最近完成的靠前。
+ * 其次是长期事项（进行中的在前，已暂停的靠后，再按优先级、新建先后）；已完成的在最后，最近完成的靠前。
  */
 export function sortTodos(todos: TodoItem[]): TodoItem[] {
   const group = (t: TodoItem) => (t.status === "done" ? 2 : t.longTerm ? 1 : 0);
   return [...todos].sort((a, b) => {
     if (group(a) !== group(b)) return group(a) - group(b);
     if (a.status === "done") return (b.completedAt ?? "").localeCompare(a.completedAt ?? "") || b.id - a.id;
-    if (a.longTerm) return PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || b.id - a.id;
+    if (a.longTerm) {
+      if (a.status !== b.status) return a.status === "ongoing" ? -1 : 1;
+      return PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || b.id - a.id;
+    }
     if (a.dueDate !== b.dueDate) {
       if (a.dueDate === null) return 1;
       if (b.dueDate === null) return -1;
@@ -97,7 +102,7 @@ export function sortTodos(todos: TodoItem[]): TodoItem[] {
 }
 
 export interface OpenTodoSummary {
-  /** 需要提醒的待办数：未完成的普通事项，加上长期事项 */
+  /** 需要提醒的待办数：未完成的普通事项，加上进行中的长期事项 */
   total: number;
   overdue: number;
   dueToday: number;
@@ -108,11 +113,11 @@ export interface OpenTodoSummary {
 
 /**
  * 首页提醒用：统计逾期、今天到期、已卡住数量，并取出最靠前的几条。
- * 长期事项没有期限，一律纳入提醒；但单独占位，不能被普通待办挤出列表。
+ * 长期事项没有期限，进行中的一律提醒；已暂停和已完成的不再打扰。
  */
 export function summarizeOpen(todos: TodoItem[], today: string, topN = 3): OpenTodoSummary {
   const actionable = sortTodos(todos.filter(isActionable));
-  const longTerm = sortTodos(todos.filter((t) => t.longTerm));
+  const longTerm = sortTodos(todos.filter((t) => t.longTerm && t.status === "ongoing"));
   const open = [...actionable, ...longTerm];
   let overdue = 0;
   let dueToday = 0;

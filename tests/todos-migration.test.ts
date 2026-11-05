@@ -30,6 +30,11 @@ describe("待办表升级", () => {
     getDb();
     expect(getTodo(1)).toMatchObject({ title: "旧待办", longTerm: false, status: "doing", progress: 40, dueDate: "2026-11-09" });
 
+    // 长期事项的状态列已补上，旧数据默认是普通事项、进行中
+    const todoCols = getDb().prepare("PRAGMA table_info(todos)").all() as unknown as { name: string }[];
+    expect(todoCols.map((c) => c.name)).toContain("long_term_status");
+    expect(getTodo(1)).toMatchObject({ longTermStatus: "ongoing" });
+
     // 版本表补了列；旧数据照常读出，且没有待办素材（NULL）
     const cols = getDb().prepare("PRAGMA table_info(daily_optimized_versions)").all() as unknown as { name: string }[];
     expect(cols.map((c) => c.name)).toContain("source_context");

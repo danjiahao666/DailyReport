@@ -166,6 +166,63 @@ describe("待办事项接口", () => {
     expect((await patch(normal.id, { dueDate: "2026-11-20", progress: 10 })).body).toMatchObject({ status: "doing", dueDate: "2026-11-20" });
   });
 
+  it("长期事项可以暂停、恢复和标记完成；暂停与已完成的都不再提醒", async () => {
+    const created = await create({ title: "长期事项状态", longTerm: true });
+    const id = created.body.id;
+    expect(created.body).toMatchObject({ status: "ongoing", longTermStatus: "ongoing" });
+
+    // 暂停：不再算卡住，也不出现在未完成列表里
+    await addBlocker(id, "告警规则待评审");
+    expect((await patch(id, { longTermStatus: "paused" })).body).toMatchObject({
+      status: "paused",
+      longTermStatus: "paused",
+      blocked: false,
+      completedAt: null,
+    });
+    const openIds = (await call(listRoute, "GET", "/api/todos?open=1")).body.todos.map((t: TodoItem) => t.id);
+    expect(openIds).not.toContain(id);
+
+    // 恢复推进：重新进入未完成列表，卡点也算回来了
+    expect((await patch(id, { longTermStatus: "ongoing" })).body).toMatchObject({
+      status: "ongoing",
+      longTermStatus: "ongoing",
+      blocked: true,
+    });
+    expect((await call(listRoute, "GET", "/api/todos?open=1")).body.todos.map((t: TodoItem) => t.id)).toContain(id);
+
+    // 标记完成：记录完成时间，不再提醒
+    const done = (await patch(id, { longTermStatus: "done" })).body;
+    expect(done).toMatchObject({ status: "done", longTermStatus: "done", blocked: false });
+    expect(done.completedAt).toBeTruthy();
+    expect((await call(listRoute, "GET", "/api/todos?open=1")).body.todos.map((t: TodoItem) => t.id)).not.toContain(id);
+
+    // 重新打开：回到进行中，清掉完成时间
+    expect((await patch(id, { longTermStatus: "ongoing" })).body).toMatchObject({ status: "ongoing", completedAt: null });
+
+    // 非法状态、普通事项不能设长期状态
+    expect((await patch(id, { longTermStatus: "xxx" })).body.error.code).toBe("INVALID_LONG_TERM_STATUS");
+    const normal = (await create({ title: "普通事项", progress: 10 })).body;
+    expect((await patch(normal.id, { longTermStatus: "paused" })).body.error.code).toBe("LONG_TERM_STATE_ONLY");
+
+    // 转换类型会重置状态：先暂停，再转回普通、再转回长期，都回到进行中
+    await patch(id, { longTermStatus: "paused" });
+    expect((await patch(id, { longTerm: false })).body).toMatchObject({ longTerm: false, status: "todo", longTermStatus: "ongoing" });
+    expect((await patch(id, { longTerm: true })).body).toMatchObject({ longTerm: true, status: "ongoing", longTermStatus: "ongoing" });
+    // 转换的同时传状态会被拒绝，避免语义不清
+    expect((await patch(id, { longTerm: false, longTermStatus: "paused" })).body.error.code).toBe("LONG_TERM_STATE_RESET");
+  });
+
+  it("编辑长期事项不会把状态重置（表单会原样带上 longTerm）", async () => {
+    const created = await create({ title: "编辑保留状态", longTerm: true });
+    const id = created.body.id;
+    await patch(id, { longTermStatus: "paused" });
+    expect((await patch(id, { title: "改个名字", longTerm: true, priority: "low" })).body).toMatchObject({
+      title: "改个名字",
+      status: "paused",
+      longTermStatus: "paused",
+    });
+  });
+
   it("?open=1 只返回未完成的待办", async () => {
     const open = (await create({ title: "open-未完成", progress: 30 })).body;
     const done = (await create({ title: "open-已完成", progress: 100 })).body;
@@ -192,7 +249,7 @@ describe("待办事项接口", () => {
 });
 
 describe("待办展示规则", () => {
-  const base = { note: "", priority: "medium", longTerm: false, startDate: null, completedAt: null, createdAt: "", updatedAt: "", blockers: [], blocked: false } as const;
+  const base = { note: "", priority: "medium", longTerm: false, longTermStatus: "ongoing", startDate: null, completedAt: null, createdAt: "", updatedAt: "", blockers: [], blocked: false } as const;
   const todo = (over: Partial<TodoItem> & { id: number }): TodoItem => ({ title: `t${over.id}`, status: "todo", progress: 0, dueDate: null, ...base, ...over }) as TodoItem;
 
   it("到期状态：逾期、今天、临近、较远、未设置、已完成", () => {
@@ -205,9 +262,11 @@ describe("待办展示规则", () => {
     // 已完成的待办即使超过期限也不算逾期；跨月、跨年也要算对
     expect(dueInfo({ dueDate: "2026-10-01", status: "done" }, today).state).toBe("done");
     expect(dueInfo({ dueDate: "2027-01-01", status: "todo" }, "2026-12-30")).toMatchObject({ state: "soon", days: 2 });
+    // 长期事项没有期限，即使数据里意外带了日期也不提示逾期和到期
+    expect(dueInfo({ dueDate: "2026-11-01", status: "ongoing", longTerm: true }, today)).toMatchObject({ state: "none", label: "" });
   });
 
-  it("长期事项：排在普通事项之后、已完成之前；不算未完成；首页提醒一律纳入并单独占位", () => {
+  it("长期事项：排在普通事项之后、已完成之前；不算未完成；首页提醒纳入统计", () => {
     const blocker = { id: 1, content: "x", createdAt: "", resolvedAt: null };
     const long = (id: number, over: Partial<TodoItem> = {}) => todo({ id, longTerm: true, status: "ongoing", ...over });
     const items = [
@@ -224,6 +283,27 @@ describe("待办展示规则", () => {
     expect(s).toMatchObject({ total: 4, blocked: 1 });
     // 长期事项按优先级、新建先后排在普通事项之后
     expect(s.top.map((t) => t.id)).toEqual([2, 4, 5, 1]);
+  });
+
+  it("首页提醒：已暂停和已完成的长期事项不再提醒", () => {
+    const items = [
+      todo({ id: 1, longTerm: true, status: "ongoing" }),
+      todo({ id: 2, longTerm: true, status: "paused" }),
+      todo({ id: 3, longTerm: true, status: "done", completedAt: "2026-11-01T00:00:00Z" }),
+    ];
+    const s = summarizeOpen(items, "2026-11-02", 5);
+    expect(s.total).toBe(1);
+    expect(s.top.map((t) => t.id)).toEqual([1]);
+  });
+
+  it("长期事项排序：进行中的在前，已暂停的靠后，已完成的最后", () => {
+    const items = [
+      todo({ id: 1, longTerm: true, status: "paused" }),
+      todo({ id: 2, longTerm: true, status: "done", completedAt: "2026-11-01T00:00:00Z" }),
+      todo({ id: 3, longTerm: true, status: "ongoing" }),
+      todo({ id: 4 }),
+    ];
+    expect(sortTodos(items).map((t) => t.id)).toEqual([4, 3, 1, 2]);
   });
 
   it("首页提醒：长期事项不会被普通待办挤出列表", () => {

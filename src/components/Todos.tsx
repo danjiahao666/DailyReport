@@ -99,7 +99,7 @@ function TodoForm({
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={values.longTerm} onChange={(e) => set("longTerm", e.target.checked)} className="pixel-check" />
         <span className="font-semibold">长期事项</span>
-        <span className="text-xs text-ink-soft">不设进度条和日期，一直挂着跟踪，也可以记卡点</span>
+        <span className="text-xs text-ink-soft">不设进度条和日期，一直挂着跟踪，可以记卡点，也可以暂停或标记完成</span>
       </label>
       <div className="flex flex-wrap gap-3">
         {!values.longTerm && (
@@ -361,7 +361,9 @@ function TodoCard({
           <div className="flex flex-wrap items-center gap-1.5">
             <span className={`pixel-tag ${PRIORITY_TAG[todo.priority]}`}>优先级 {PRIORITY_LABEL[todo.priority]}</span>
             {todo.longTerm ? (
-              <span className="pixel-tag pixel-tag--violet">长期事项</span>
+              <span className={`pixel-tag ${todo.status === "done" ? "pixel-tag--green" : todo.status === "paused" ? "pixel-tag--plain" : "pixel-tag--violet"}`}>
+                {todo.status === "done" ? "长期·已完成" : todo.status === "paused" ? "长期·已暂停" : "长期事项"}
+              </span>
             ) : done ? (
               <span className="pixel-tag pixel-tag--green">已完成</span>
             ) : (
@@ -376,7 +378,30 @@ function TodoCard({
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap gap-1.5">
-          {todo.longTerm ? null : done ? (
+          {todo.longTerm ? (
+            <>
+              {done ? (
+                <Button size="sm" disabled={busy} onClick={() => patch({ longTermStatus: "ongoing" })}>
+                  重新打开
+                </Button>
+              ) : (
+                <>
+                  <Button size="sm" disabled={busy} onClick={() => patch({ longTermStatus: "done" })}>
+                    标记完成
+                  </Button>
+                  {todo.status === "paused" ? (
+                    <Button size="sm" disabled={busy} onClick={() => patch({ longTermStatus: "ongoing" })}>
+                      恢复推进
+                    </Button>
+                  ) : (
+                    <Button size="sm" disabled={busy} onClick={() => patch({ longTermStatus: "paused" })}>
+                      暂停
+                    </Button>
+                  )}
+                </>
+              )}
+            </>
+          ) : done ? (
             <Button size="sm" disabled={busy} onClick={() => patch({ progress: REOPEN_PROGRESS })}>
               重新打开
             </Button>
@@ -424,6 +449,8 @@ function TodoCard({
           </div>
         </>
       )}
+
+      {todo.longTerm && done && todo.completedAt && <p className="text-xs text-ink-soft">完成于：{fmtTime(todo.completedAt)}</p>}
 
       {todo.note && <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{todo.note}</p>}
 
